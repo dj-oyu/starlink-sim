@@ -47,6 +47,40 @@ export interface ViewCommands {
   zoom: (factor: number) => void;
   resetView: () => void;
   focusGroundStation: () => void;
+  focusSatellite: (idx: number) => void;
+  setAutoRotate: (on: boolean) => void;
+}
+
+/** Smooth camera transition state (preallocated; advanced once per frame). */
+interface CameraFlight {
+  active: boolean;
+  t: number;
+  dur: number;
+  fromDir: THREE.Vector3;
+  toDir: THREE.Vector3;
+  fromDist: number;
+  toDist: number;
+  fromTarget: THREE.Vector3;
+  toTarget: THREE.Vector3;
+}
+
+const _flyQFull = new THREE.Quaternion();
+const _flyQPart = new THREE.Quaternion();
+const _flyQId = new THREE.Quaternion();
+const _flyDir = new THREE.Vector3();
+const _origin = new THREE.Vector3(0, 0, 0);
+
+/** Camera distance that fits the whole globe in the viewport (portrait screens sit further back). */
+function fitCameraDistance(
+  cam: THREE.PerspectiveCamera,
+  controls: { minDistance: number; maxDistance: number },
+): number {
+  const aspect = cam.aspect > 0 ? cam.aspect : 1;
+  const tanHalf = Math.tan((cam.fov * Math.PI) / 360);
+  return Math.min(
+    controls.maxDistance,
+    Math.max(controls.minDistance, 1.1 / (tanHalf * Math.min(aspect, 1))),
+  );
 }
 
 /**
@@ -385,34 +419,82 @@ export function ConstellationView({
   });
   const prevSelectedPosRef = useRef<THREE.Vector3 | null>(null);
 
+  // Initial framing: choose a distance that fits the screen (matters on portrait).
   useEffect(() => {
-    if (!viewCommandsRef) return;
-    const offset = new THREE.Vector3();
-    viewCommandsRef.current = {
-      zoom: (factor) => {
-        offset.copy(camera.position).sub(controls.target);
-        const len = Math.min(
-          controls.maxDistance,
-          Math.max(controls.minDistance, offset.length() * factor),
-        );
-        offset.setLength(len);
-        camera.position.copy(controls.target).add(offset);
-      },
-      resetView: () => {
-        camera.position.set(0, 0.85, 2.55);
-        if (!followSelected) controls.target.set(0, 0, 0);
-      },
-      focusGroundStation: () => {
-        offset.set(obsThreePos[0], obsThreePos[1], obsThreePos[2]);
-        if (offset.lengthSq() < 1e-9) return;
-        controls.target.set(0, 0, 0);
-        camera.position.copy(offset.setLength(2.1));
-      },
+    camera.position.setLength(
+      fitCameraDistance(camera as THREE.PerspectiveCamera, controls),
+    );
+  }, [camera, controls]);
+
+  const flightRef = useRef<CameraFlight>({
+    active: false,
+    t: 0,
+    dur: 0.8,
+    fromDir: new THREE.Vector3(),
+    toDir: new THREE.Vector3(),
+    fromDist: 1,
+    toDist: 1,
+    fromTarget: new THREE.Vector3(),
+    toTarget: new THREE.Vector3(),
+  });
+
+  useEffect(() => {
+    const flight = flightRef.current;
+    const tmp = new THREE.Vector3();
+    const persp = camera as THREE.PerspectiveCamera;
+
+    const fitDistance = () => fitCameraDistance(persp, controls);
+
+    const flyTo = (dir: THREE.Vector3, dist: number, target: THREE.Vector3, dur: number) => {
+      flight.fromDir.copy(camera.position).normalize();
+      flight.fromDist = camera.position.length();
+      flight.fromTarget.copy(controls.target);
+      flight.toDir.copy(dir).normalize();
+      flight.toDist = Math.min(controls.maxDistance, Math.max(controls.minDistance, dist));
+      flight.toTarget.copy(target);
+      flight.t = 0;
+      flight.dur = dur;
+      flight.active = true;
     };
+
+    const cancel = () => {
+      flight.active = false;
+    };
+    controls.addEventListener('start', cancel);
+
+    if (viewCommandsRef) {
+      viewCommandsRef.current = {
+        zoom: (factor) => {
+          tmp.copy(camera.position);
+          flyTo(tmp, camera.position.length() * factor, controls.target, 0.3);
+        },
+        resetView: () => {
+          tmp.set(0, 0.85, 2.55);
+          if (followSelected) tmp.copy(camera.position);
+          flyTo(tmp, fitDistance(), followSelected ? controls.target : _origin, 0.9);
+        },
+        focusGroundStation: () => {
+          tmp.set(obsThreePos[0], obsThreePos[1], obsThreePos[2]);
+          if (tmp.lengthSq() < 1e-9) return;
+          flyTo(tmp, Math.max(2.1, fitDistance() * 0.8), _origin, 1.0);
+        },
+        focusSatellite: (idx) => {
+          const arr = posAttr.array as Float32Array;
+          tmp.set(arr[idx * 3], arr[idx * 3 + 1], arr[idx * 3 + 2]);
+          if (tmp.lengthSq() < 1e-9) return;
+          flyTo(tmp, Math.max(1.9, fitDistance() * 0.75), _origin, 1.0);
+        },
+        setAutoRotate: (on) => {
+          controls.autoRotate = on;
+          controls.autoRotateSpeed = 0.6;
+        },
+      };
+    }
     return () => {
-      viewCommandsRef.current = null;
+      controls.removeEventListener('start', cancel);
+      if (viewCommandsRef) viewCommandsRef.current = null;
     };
-  }, [viewCommandsRef, camera, controls, obsThreePos, followSelected]);
+  }, [viewCommandsRef, camera, controls, obsThreePos, followSelected, posAttr]);
 
   useEffect(() => {
     if (!followSelected) {
@@ -424,6 +506,21 @@ export function ConstellationView({
 
   useFrame((threeState, delta) => {
     if (satCount === 0) return;
+
+    const fl = flightRef.current;
+    if (fl.active) {
+      fl.t += Math.min(delta, 0.1) / fl.dur;
+      const k = Math.min(1, fl.t);
+      const e = k * k * (3 - 2 * k); // smoothstep
+      _flyQFull.setFromUnitVectors(fl.fromDir, fl.toDir);
+      _flyQPart.copy(_flyQId).slerp(_flyQFull, e);
+      _flyDir.copy(fl.fromDir).applyQuaternion(_flyQPart);
+      camera.position.copy(_flyDir).multiplyScalar(
+        fl.fromDist + (fl.toDist - fl.fromDist) * e,
+      );
+      controls.target.lerpVectors(fl.fromTarget, fl.toTarget, e);
+      if (k >= 1) fl.active = false;
+    }
 
     const dtClamped = Math.min(delta, 0.1);
     if (isPlaying) {

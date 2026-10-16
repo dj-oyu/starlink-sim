@@ -27,6 +27,7 @@ import {
 import {
   Crosshair,
   House,
+  Rotate3d,
   LocateFixed,
   Minus,
   Plus,
@@ -234,6 +235,7 @@ export function App() {
   const [satVersion, setSatVersion] = useState(0);
   const pointsRef = useRef<THREE.Points | null>(null);
   const viewCommandsRef = useRef<ViewCommands | null>(null);
+  const [autoRotate, setAutoRotate] = useState(false);
   const earthMeshRef = useRef<THREE.Mesh | null>(null);
 
   // Simulation Clock (updated via Direct DOM refs to avoid Preact VDOM re-renders)
@@ -401,6 +403,53 @@ export function App() {
       datetimeInputRef.current.value = toDatetimeLocalValue(ms);
     }
   };
+
+  // Camera: auto-rotate toggle, fly to a newly selected satellite, keyboard shortcuts
+  useEffect(() => {
+    viewCommandsRef.current?.setAutoRotate(autoRotate && !followSelected);
+  }, [autoRotate, followSelected, engine]);
+
+  useEffect(() => {
+    if (selectedSatIndex === null || followSelected) return;
+    viewCommandsRef.current?.focusSatellite(selectedSatIndex);
+  }, [selectedSatIndex]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      const v = viewCommandsRef.current;
+      if (!v) return;
+      switch (e.key) {
+        case '+':
+        case '=':
+          v.zoom(0.8);
+          break;
+        case '-':
+        case '_':
+          v.zoom(1.25);
+          break;
+        case 'h':
+          v.resetView();
+          break;
+        case 'g':
+          v.focusGroundStation();
+          break;
+        case 'f':
+          if (selectedSatIndex !== null) setFollowSelected((x) => !x);
+          break;
+        case 'r':
+          setAutoRotate((x) => !x);
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedSatIndex]);
 
   const handleFrameStats = (
     simTimeMs: number,
@@ -1072,8 +1121,8 @@ export function App() {
           className={`fab ${followSelected ? 'on' : ''}`}
           title={
             selectedSatIndex === null
-              ? '選択衛星を追従 (衛星を選択してください)'
-              : '選択衛星を追従'
+              ? '選択衛星を追従 [F] (衛星を選択してください)'
+              : '選択衛星を追従 [F]'
           }
           aria-label="選択衛星を追従"
           aria-pressed={followSelected}
@@ -1085,7 +1134,7 @@ export function App() {
         {observer.enabled && (
           <button
             className="fab"
-            title="地上局へ視点を移動"
+            title="地上局へ視点を移動 [G]"
             aria-label="地上局へ視点を移動"
             onClick={() => viewCommandsRef.current?.focusGroundStation()}
           >
@@ -1093,8 +1142,17 @@ export function App() {
           </button>
         )}
         <button
+          className={`fab ${autoRotate ? 'on' : ''}`}
+          title="自動回転 [R]"
+          aria-label="自動回転"
+          aria-pressed={autoRotate}
+          onClick={() => setAutoRotate((v) => !v)}
+        >
+          <Rotate3d size={18} />
+        </button>
+        <button
           className="fab"
-          title="視点をリセット"
+          title="視点をリセット [H]"
           aria-label="視点をリセット"
           onClick={() => viewCommandsRef.current?.resetView()}
         >
@@ -1103,7 +1161,7 @@ export function App() {
         <div className="fab-group">
           <button
             className="fab"
-            title="拡大"
+            title="拡大 [+]"
             aria-label="拡大"
             onClick={() => viewCommandsRef.current?.zoom(0.8)}
           >
@@ -1111,7 +1169,7 @@ export function App() {
           </button>
           <button
             className="fab"
-            title="縮小"
+            title="縮小 [-]"
             aria-label="縮小"
             onClick={() => viewCommandsRef.current?.zoom(1.25)}
           >
