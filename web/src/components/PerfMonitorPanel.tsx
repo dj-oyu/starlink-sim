@@ -30,8 +30,7 @@ export function PerfMonitorPanel({
   const readMsRef = useRef<HTMLSpanElement>(null);
   const bufMsRef = useRef<HTMLSpanElement>(null);
   const glMsRef = useRef<HTMLSpanElement>(null);
-  const polyTotalRef = useRef<SVGPolylineElement>(null);
-  const polyWasmRef = useRef<SVGPolylineElement>(null);
+  const chartRef = useRef<HTMLCanvasElement>(null);
   const drawCallsRef = useRef<HTMLDivElement>(null);
   const ptsTrisRef = useRef<HTMLDivElement>(null);
   const wasmMemRef = useRef<HTMLDivElement>(null);
@@ -44,10 +43,29 @@ export function PerfMonitorPanel({
   useEffect(() => {
     const histTotal = new Float32Array(60);
     const histWasm = new Float32Array(60);
-    const xCoords = new Array<string>(60);
+    // The history chart is drawn on a canvas with preallocated state: building
+    // SVG `points` strings every update was the largest steady-state JS allocation.
+    const xCoords = new Float32Array(60);
     for (let i = 0; i < 60; i++) {
-      xCoords[i] = ((i / 59) * w).toFixed(1);
+      xCoords[i] = (i / 59) * w;
     }
+    const dashed: number[] = [3, 3];
+    const solid: number[] = [];
+    const drawLine = (
+      ctx: CanvasRenderingContext2D,
+      hist: Float32Array,
+      n: number,
+      color: string,
+    ) => {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const y = (h - Math.min(1, hist[i] / maxMs) * (h - 4) - 2) | 0;
+        if (i === 0) ctx.moveTo(xCoords[i], y);
+        else ctx.lineTo(xCoords[i], y);
+      }
+      ctx.stroke();
+    };
     let count = 0;
     let prevHeapMb: number | null = null;
     let prevTimeMs = performance.now();
@@ -118,18 +136,23 @@ export function PerfMonitorPanel({
         histWasm[59] = perf.wasmPureSgp4Ms;
       }
 
-      if (count > 1) {
-        let strTot = '';
-        let strWasm = '';
-        for (let i = 0; i < count; i++) {
-          const x = xCoords[i];
-          const yTot = ((h - Math.min(1, histTotal[i] / maxMs) * (h - 4) - 2) | 0);
-          const yWasm = ((h - Math.min(1, histWasm[i] / maxMs) * (h - 4) - 2) | 0);
-          strTot += (i === 0 ? '' : ' ') + x + ',' + yTot;
-          strWasm += (i === 0 ? '' : ' ') + x + ',' + yWasm;
-        }
-        if (polyTotalRef.current) polyTotalRef.current.setAttribute('points', strTot);
-        if (polyWasmRef.current) polyWasmRef.current.setAttribute('points', strWasm);
+      const canvas = chartRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (canvas && ctx && count > 1) {
+        ctx.setTransform(canvas.width / w, 0, 0, canvas.height / h, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(248, 113, 113, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash(dashed);
+        ctx.beginPath();
+        ctx.moveTo(0, 4);
+        ctx.lineTo(w, 4);
+        ctx.stroke();
+        ctx.setLineDash(solid);
+        ctx.lineWidth = 1.5;
+        drawLine(ctx, histTotal, count, '#34d399');
+        drawLine(ctx, histWasm, count, '#38bdf8');
       }
 
       if (drawCallsRef.current) drawCallsRef.current.textContent = `${perf.drawCalls} calls`;
@@ -358,30 +381,12 @@ export function PerfMonitorPanel({
           <span>60-Frame History (Green=Total, Cyan=Wasm SGP4)</span>
           <span>Max 18ms</span>
         </div>
-        <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`}>
-          <line
-            x1="0"
-            y1="4"
-            x2={w}
-            y2="4"
-            stroke="rgba(248, 113, 113, 0.35)"
-            strokeDasharray="3,3"
-          />
-          <polyline
-            ref={polyTotalRef}
-            fill="none"
-            stroke="#34d399"
-            strokeWidth="1.5"
-            points=""
-          />
-          <polyline
-            ref={polyWasmRef}
-            fill="none"
-            stroke="#38bdf8"
-            strokeWidth="1.5"
-            points=""
-          />
-        </svg>
+        <canvas
+          ref={chartRef}
+          width={w * 2}
+          height={h * 2}
+          style={{ width: '100%', height: `${h}px`, display: 'block' }}
+        />
       </div>
 
       {/* WebGL GPU & Memory Telemetry */}

@@ -10,3 +10,6 @@ web/dist/
 # Third-party assets of unverified redistribution terms (see README)
 web/public/assets/textures/
 web/public/assets/data/starlink.tle
+
+# Claude Code agent worktrees
+.claude/worktrees/
