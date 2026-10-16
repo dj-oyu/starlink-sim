@@ -4,7 +4,6 @@ import { useFrame, useThree, RenderPerfStats } from '../fiber/PreactFiber';
 import {
   StarlinkSimEngine,
   ObserverConfig,
-  SHELL_INFO,
   EARTH_RADIUS_KM,
   latLonAltToThree,
   SatelliteTelemetry,
@@ -42,16 +41,53 @@ interface ConstellationViewProps {
   ) => void;
 }
 
+/**
+ * GPU Vertex Shader with built-in SIMT palette lookup:
+ * Instead of uploading 3x Float32 RGB colors (128 KB) + 1x Float32 size (42 KB) from CPU,
+ * CPU passes a single packed float `aStyle`:
+ *  -1.0       : Hidden / Filtered out
+ *   0.0 .. 4.0: Orbital Shell 0..4 normal (size 2.8)
+ *  10.0 ..14.0: Orbital Shell 0..4 search-highlighted (size 4.8)
+ *  16.0       : In Ground Station Dish FOV (Emerald, size 5.4)
+ *  24.0       : Selected Satellite (Gold, size 8.5)
+ */
 const SAT_POINTS_VERT = /* glsl */ `
-  attribute vec3 aColor;
-  attribute float aSize;
+  attribute float aStyle;
   varying vec3 vColor;
 
+  vec3 getShellColor(float s) {
+    if (s < 0.5) return vec3(0.22, 0.74, 0.97);
+    if (s < 1.5) return vec3(0.65, 0.55, 0.98);
+    if (s < 2.5) return vec3(0.20, 0.83, 0.60);
+    if (s < 3.5) return vec3(0.96, 0.45, 0.71);
+    return vec3(0.98, 0.57, 0.24);
+  }
+
   void main() {
-    vColor = aColor;
+    if (aStyle < -0.5) {
+      gl_PointSize = 0.0;
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      vColor = vec3(0.0);
+      return;
+    }
+
+    float baseSize = 2.8;
+    if (aStyle > 20.0) {
+      vColor = vec3(1.0, 0.92, 0.25);
+      baseSize = 8.5;
+    } else if (aStyle > 15.0) {
+      vColor = vec3(0.15, 1.0, 0.55);
+      baseSize = 5.4;
+    } else if (aStyle >= 9.5) {
+      vColor = getShellColor(aStyle - 10.0);
+      baseSize = 4.8;
+    } else {
+      vColor = getShellColor(aStyle);
+    }
+
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float dist = max(-mvPosition.z, 0.25);
-    gl_PointSize = clamp(aSize * (5.2 / dist), 2.0, 26.0);
+    gl_PointSize = clamp(baseSize * (5.2 / dist), 2.0, 26.0);
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -69,6 +105,9 @@ const SAT_POINTS_FRAG = /* glsl */ `
     gl_FragColor = vec4(col, core + halo);
   }
 `;
+
+const _followCurPos = new THREE.Vector3();
+const _followDelta = new THREE.Vector3();
 
 export function ConstellationView({
   engine,
@@ -102,46 +141,28 @@ export function ConstellationView({
 
   const {
     posAttr,
-    colAttr,
-    sizeAttr,
+    styleAttr,
     commLineAttr,
     commLinePositions,
-    prevStateCode,
-    shellRgbFlat,
   } = useMemo(() => {
     const count = Math.max(satCount, 1);
     const pos = new Float32Array(count * 3);
-    const col = new Float32Array(count * 3);
-    const sz = new Float32Array(count);
+    const style = new Float32Array(count);
+    style.fill(-2.0); // Force initial style upload on frame 1
     const comm = new Float32Array(600 * 6);
-    const stateCode = new Uint8Array(count);
-    stateCode.fill(255);
 
     const pAttr = new THREE.BufferAttribute(pos, 3);
     pAttr.setUsage(THREE.DynamicDrawUsage);
-    const cAttr = new THREE.BufferAttribute(col, 3);
-    cAttr.setUsage(THREE.DynamicDrawUsage);
-    const sAttr = new THREE.BufferAttribute(sz, 1);
-    sAttr.setUsage(THREE.DynamicDrawUsage);
+    const stAttr = new THREE.BufferAttribute(style, 1);
+    stAttr.setUsage(THREE.DynamicDrawUsage);
     const commAttr = new THREE.BufferAttribute(comm, 3);
     commAttr.setUsage(THREE.DynamicDrawUsage);
 
-    const rgbFlat = new Float32Array(5 * 3);
-    for (let s = 0; s < 5; s++) {
-      const rgb = SHELL_INFO[s]?.rgb ?? [0.22, 0.74, 0.97];
-      rgbFlat[s * 3] = rgb[0];
-      rgbFlat[s * 3 + 1] = rgb[1];
-      rgbFlat[s * 3 + 2] = rgb[2];
-    }
-
     return {
       posAttr: pAttr,
-      colAttr: cAttr,
-      sizeAttr: sAttr,
+      styleAttr: stAttr,
       commLineAttr: commAttr,
       commLinePositions: comm,
-      prevStateCode: stateCode,
-      shellRgbFlat: rgbFlat,
     };
   }, [satCount]);
 
@@ -153,8 +174,7 @@ export function ConstellationView({
     // 1. Satellites Points Cloud
     const ptsGeom = new THREE.BufferGeometry();
     ptsGeom.setAttribute('position', posAttr);
-    ptsGeom.setAttribute('aColor', colAttr);
-    ptsGeom.setAttribute('aSize', sizeAttr);
+    ptsGeom.setAttribute('aStyle', styleAttr);
     const ptsMat = new THREE.ShaderMaterial({
       vertexShader: SAT_POINTS_VERT,
       fragmentShader: SAT_POINTS_FRAG,
@@ -252,7 +272,7 @@ export function ConstellationView({
       scene.remove(group);
       pointsRef.current = null;
     };
-  }, [scene, posAttr, colAttr, sizeAttr, commLineAttr]);
+  }, [scene, posAttr, styleAttr, commLineAttr]);
 
   // Keep MoonBit observer & Ground Station geometry synced
   const obsThreePos = useMemo(() => {
@@ -369,110 +389,77 @@ export function ConstellationView({
     engine.propagate(currentSimMs);
     sunDirectionRef.current = engine.sunDirectionThree;
 
-    // 2. Single-pass Wasm readout directly into Three.js WebGL attributes (no intermediate JS buffer)
+    // 2. SWAR 4-sat-at-once status readout + single-pass WebGL buffer sync
     const b0 = performance.now();
     const api = engine.api;
     const invR = 1.0 / EARTH_RADIUS_KM;
-    const valid = engine.validFlags;
-    const vis = engine.visibleFlags;
-    const visList = engine.visibleIndices;
-    let visCount = 0;
-    const shellIds = engine.shellIds;
+    const satStatus = engine.satStatus;
+    const satStatusU32 = engine.satStatusU32;
+    const quadLen = satStatusU32.length;
+
+    // Read 4 satellite status bytes per call (2,663 calls instead of 21,304 calls)
+    for (let q = 0; q < quadLen; q++) {
+      satStatusU32[q] = api.get_sat_status_quad(q << 2);
+    }
+
     const dstPos = posAttr.array as Float32Array;
-    const dstCol = colAttr.array as Float32Array;
-    const dstSize = sizeAttr.array as Float32Array;
+    const dstStyle = styleAttr.array as Float32Array;
     const hasSearch = searchMatchIndices !== null;
     const obsEnabled = observer.enabled;
-    const s0 = enabledShells[0] ?? true;
-    const s1 = enabledShells[1] ?? true;
-    const s2 = enabledShells[2] ?? true;
-    const s3 = enabledShells[3] ?? true;
-    const s4 = enabledShells[4] ?? true;
+    const shellMask =
+      ((enabledShells[0] ?? true) ? 1 : 0) |
+      ((enabledShells[1] ?? true) ? 2 : 0) |
+      ((enabledShells[2] ?? true) ? 4 : 0) |
+      ((enabledShells[3] ?? true) ? 8 : 0) |
+      ((enabledShells[4] ?? true) ? 16 : 0);
     let styleDirty = false;
+    let activeVisCount = 0;
 
     for (let i = 0; i < satCount; i++) {
-      const ok = api.get_sat_valid(i);
-      valid[i] = ok;
-      const shId = shellIds[i];
-      const shellEnabled =
-        shId === 0
-          ? s0
-          : shId === 1
-            ? s1
-            : shId === 2
-              ? s2
-              : shId === 3
-                ? s3
-                : s4;
+      const st = satStatus[i];
+      const shId = st & 7;
+      const ok = (st & 8) !== 0;
+      const shellEnabled = (shellMask & (1 << shId)) !== 0;
       const matchesSearch = !hasSearch || searchMatchIndices.has(i);
-      const i3 = i * 3;
 
       if (!ok || !shellEnabled || !matchesSearch) {
-        vis[i] = 0;
-        dstPos[i3] = 0;
-        dstPos[i3 + 1] = 0;
-        dstPos[i3 + 2] = 0;
-        if (prevStateCode[i] !== 0) {
-          prevStateCode[i] = 0;
-          dstSize[i] = 0;
+        if (dstStyle[i] !== -1.0) {
+          dstStyle[i] = -1.0;
           styleDirty = true;
         }
         continue;
       }
 
-      const ex = api.get_sat_ecef_x(i);
-      const ey = api.get_sat_ecef_y(i);
-      const ez = api.get_sat_ecef_z(i);
-      dstPos[i3] = ex * invR;
-      dstPos[i3 + 1] = ez * invR;
-      dstPos[i3 + 2] = -ey * invR;
+      const i3 = i * 3;
+      dstPos[i3] = api.get_sat_ecef_x(i) * invR;
+      dstPos[i3 + 1] = api.get_sat_ecef_z(i) * invR;
+      dstPos[i3 + 2] = -api.get_sat_ecef_y(i) * invR;
 
-      const isVis = obsEnabled ? api.get_sat_visible(i) : 0;
-      vis[i] = isVis;
-      if (isVis) {
-        visList[visCount++] = i;
-      }
+      const isVis = obsEnabled && (st & 16) !== 0;
+      if (isVis) activeVisCount++;
 
-      let code: number;
-      if (i === selectedSatIndex) {
-        code = 3;
-      } else if (isVis) {
-        code = 2;
-      } else {
-        code = hasSearch ? 4 : 1;
-      }
+      const style =
+        i === selectedSatIndex
+          ? 24.0
+          : isVis
+            ? 16.0
+            : hasSearch
+              ? 10.0 + shId
+              : shId;
 
-      if (prevStateCode[i] !== code) {
-        prevStateCode[i] = code;
+      if (dstStyle[i] !== style) {
+        dstStyle[i] = style;
         styleDirty = true;
-        if (code === 3) {
-          dstCol[i3] = 1.0;
-          dstCol[i3 + 1] = 0.92;
-          dstCol[i3 + 2] = 0.25;
-          dstSize[i] = 8.5;
-        } else if (code === 2) {
-          dstCol[i3] = 0.15;
-          dstCol[i3 + 1] = 1.0;
-          dstCol[i3 + 2] = 0.55;
-          dstSize[i] = 5.4;
-        } else {
-          const cIdx = shId * 3;
-          dstCol[i3] = shellRgbFlat[cIdx];
-          dstCol[i3 + 1] = shellRgbFlat[cIdx + 1];
-          dstCol[i3 + 2] = shellRgbFlat[cIdx + 2];
-          dstSize[i] = code === 4 ? 4.8 : 2.8;
-        }
       }
     }
 
-    engine.visibleCount = visCount;
+    engine.visibleCount = activeVisCount;
     posAttr.needsUpdate = true;
     if (styleDirty) {
-      colAttr.needsUpdate = true;
-      sizeAttr.needsUpdate = true;
+      styleAttr.needsUpdate = true;
     }
 
-    // 3. Update Ground Station visibility & communication links
+    // 3. Update Ground Station visibility & communication links via Wasm visible_indices
     if (obsGroupRef.current) {
       obsGroupRef.current.visible = obsEnabled;
       if (obsPinMeshRef.current) {
@@ -486,11 +473,12 @@ export function ConstellationView({
 
     if (commLinesGeomRef.current) {
       if (obsEnabled && showCommLinks) {
-        const linkCount = Math.min(visCount, 600);
+        const rawVisTotal = api.get_visible_count();
         const [ox, oy, oz] = obsThreePos;
         let ptr = 0;
-        for (let k = 0; k < linkCount; k++) {
-          const sIdx = visList[k];
+        for (let k = 0; k < rawVisTotal && ptr < 3600; k++) {
+          const sIdx = api.get_visible_sat_index(k);
+          if (dstStyle[sIdx] < 0) continue;
           const idx3 = sIdx * 3;
           commLinePositions[ptr++] = ox;
           commLinePositions[ptr++] = oy;
@@ -510,7 +498,7 @@ export function ConstellationView({
     engine.wasmReadoutMs = 0;
 
     // 4. Update Selected Satellite Marker, Orbit Path & Camera Follow
-    if (selectedSatIndex !== null && valid[selectedSatIndex]) {
+    if (selectedSatIndex !== null && (satStatus[selectedSatIndex] & 8) !== 0) {
       const s3 = selectedSatIndex * 3;
       const sx = dstPos[s3];
       const sy = dstPos[s3 + 1];
@@ -588,16 +576,17 @@ export function ConstellationView({
       }
 
       if (followSelected) {
-        const curPos = new THREE.Vector3(sx, sy, sz);
+        _followCurPos.set(sx, sy, sz);
         if (!prevSelectedPosRef.current) {
-          const outward = curPos.clone().normalize().multiplyScalar(0.38);
-          camera.position.copy(curPos).add(outward);
+          prevSelectedPosRef.current = new THREE.Vector3(sx, sy, sz);
+          _followDelta.copy(_followCurPos).normalize().multiplyScalar(0.38);
+          camera.position.copy(_followCurPos).add(_followDelta);
         } else {
-          const deltaMove = curPos.clone().sub(prevSelectedPosRef.current);
-          camera.position.add(deltaMove);
+          _followDelta.copy(_followCurPos).sub(prevSelectedPosRef.current);
+          camera.position.add(_followDelta);
+          prevSelectedPosRef.current.copy(_followCurPos);
         }
-        controls.target.copy(curPos);
-        prevSelectedPosRef.current = curPos;
+        controls.target.copy(_followCurPos);
       }
     } else {
       if (selectedMarkerRef.current) {

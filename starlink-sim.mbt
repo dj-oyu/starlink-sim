@@ -1,20 +1,25 @@
 ///|
-/// Global simulation state holding initialized SGP4 satellites and per-frame outputs.
+/// Global simulation state holding initialized SGP4 satellites and compact bit-packed outputs.
+/// `sat_status[i]` packs: bit0..2 = shell_id (0..4), bit3 = valid (8), bit4 = visible (16).
 priv struct SimState {
   satellites : Array[SatRec]
   mut ecef_x : Array[Double]
   mut ecef_y : Array[Double]
   mut ecef_z : Array[Double]
-  mut sat_ok : Array[Bool]
-  mut sat_el_deg : Array[Double]
-  mut sat_az_deg : Array[Double]
-  mut sat_range_km : Array[Double]
-  mut sat_visible : Array[Bool]
+  mut sat_status : Array[Int32]
+  mut visible_indices : Array[Int32]
   mut obs_lat_deg : Double
   mut obs_lon_deg : Double
   mut obs_alt_km : Double
   mut obs_min_el_deg : Double
   mut obs_enabled : Bool
+  mut obs_ox : Double
+  mut obs_oy : Double
+  mut obs_oz : Double
+  mut obs_sin_lat : Double
+  mut obs_cos_lat : Double
+  mut obs_sin_lon : Double
+  mut obs_cos_lon : Double
   mut visible_count : Int32
   mut sun_x : Double
   mut sun_y : Double
@@ -29,16 +34,20 @@ let sim_state : SimState = {
   ecef_x: [],
   ecef_y: [],
   ecef_z: [],
-  sat_ok: [],
-  sat_el_deg: [],
-  sat_az_deg: [],
-  sat_range_km: [],
-  sat_visible: [],
+  sat_status: [],
+  visible_indices: [],
   obs_lat_deg: 35.6762, // Tokyo default
   obs_lon_deg: 139.6503,
   obs_alt_km: 0.04,
   obs_min_el_deg: 25.0,
   obs_enabled: true,
+  obs_ox: -3954.8,
+  obs_oy: 3354.9,
+  obs_oz: 3700.2,
+  obs_sin_lat: 0.5832,
+  obs_cos_lat: 0.8123,
+  obs_sin_lon: 0.6474,
+  obs_cos_lon: -0.7621,
   visible_count: 0,
   sun_x: 1.0,
   sun_y: 0.0,
@@ -54,11 +63,8 @@ pub fn reset_constellation() -> Unit {
   sim_state.ecef_x = []
   sim_state.ecef_y = []
   sim_state.ecef_z = []
-  sim_state.sat_ok = []
-  sim_state.sat_el_deg = []
-  sim_state.sat_az_deg = []
-  sim_state.sat_range_km = []
-  sim_state.sat_visible = []
+  sim_state.sat_status = []
+  sim_state.visible_indices = []
   sim_state.visible_count = 0
 }
 
@@ -87,11 +93,7 @@ pub fn add_satellite_elements(
   sim_state.ecef_x.push(0.0)
   sim_state.ecef_y.push(0.0)
   sim_state.ecef_z.push(0.0)
-  sim_state.sat_ok.push(false)
-  sim_state.sat_el_deg.push(-90.0)
-  sim_state.sat_az_deg.push(0.0)
-  sim_state.sat_range_km.push(0.0)
-  sim_state.sat_visible.push(false)
+  sim_state.sat_status.push(rec.shell_id & 7)
   idx
 }
 
@@ -115,12 +117,20 @@ pub fn set_observer(
   sim_state.obs_alt_km = alt_km
   sim_state.obs_min_el_deg = min_el_deg
   sim_state.obs_enabled = enabled != 0
+  let (ox, oy, oz) = geodetic_to_ecef(lat_deg, lon_deg, alt_km)
+  sim_state.obs_ox = ox
+  sim_state.obs_oy = oy
+  sim_state.obs_oz = oz
+  sim_state.obs_sin_lat = @math.sin(lat_deg * deg_to_rad)
+  sim_state.obs_cos_lat = @math.cos(lat_deg * deg_to_rad)
+  sim_state.obs_sin_lon = @math.sin(lon_deg * deg_to_rad)
+  sim_state.obs_cos_lon = @math.cos(lon_deg * deg_to_rad)
 }
 
 ///|
 /// Propagate all satellites in the constellation to `unix_ms` (UTC milliseconds).
-/// Computes SGP4 TEME state, rotates to ECEF, updates Sun direction, and evaluates
-/// Ground Station visibility for every satellite.
+/// Computes SGP4 TEME state, rotates to ECEF, updates Sun direction, and packs
+/// `(shell_id | (valid << 3) | (visible << 4))` into `sat_status` with zero transcendental calls.
 /// Returns the number of valid propagated satellites.
 pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let jd = unix_ms_to_jd(unix_ms)
@@ -134,18 +144,25 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   sim_state.sun_y = sy
   sim_state.sun_z = sz
 
-  // Precompute observer ECEF and topocentric basis vectors
+  // Precompute observer ECEF and topocentric zenith unit vector
   let (ox, oy, oz) = geodetic_to_ecef(
     sim_state.obs_lat_deg,
     sim_state.obs_lon_deg,
     sim_state.obs_alt_km,
   )
+  sim_state.obs_ox = ox
+  sim_state.obs_oy = oy
+  sim_state.obs_oz = oz
   let lat_r = sim_state.obs_lat_deg * deg_to_rad
   let lon_r = sim_state.obs_lon_deg * deg_to_rad
   let sin_lat = @math.sin(lat_r)
   let cos_lat = @math.cos(lat_r)
   let sin_lon = @math.sin(lon_r)
   let cos_lon = @math.cos(lon_r)
+  sim_state.obs_sin_lat = sin_lat
+  sim_state.obs_cos_lat = cos_lat
+  sim_state.obs_sin_lon = sin_lon
+  sim_state.obs_cos_lon = cos_lon
   let up_x = cos_lat * cos_lon
   let up_y = cos_lat * sin_lon
   let up_z = sin_lat
@@ -153,6 +170,7 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let min_sin_el_sq = min_sin_el * min_sin_el
   let obs_on = sim_state.obs_enabled
 
+  sim_state.visible_indices.clear()
   let n = sim_state.satellites.length()
   let mut valid_count = 0
   let mut vis_count = 0
@@ -160,6 +178,7 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let mut i = 0
   while i < n {
     let sat = sim_state.satellites[i]
+    let shell_bits = sat.shell_id & 7
     let tsince = (jd - sat.jdsatepoch) * minutes_per_day
     let (rx, ry, rz, ok) = sgp4_propagate_pos(sat, tsince)
     if ok {
@@ -169,50 +188,27 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
       sim_state.ecef_x[i] = ex
       sim_state.ecef_y[i] = ey
       sim_state.ecef_z[i] = ez
-      sim_state.sat_ok[i] = true
       valid_count = valid_count + 1
 
+      let mut status = shell_bits | 8
       if obs_on {
         let dx = ex - ox
         let dy = ey - oy
         let dz = ez - oz
         let top_z = up_x * dx + up_y * dy + up_z * dz
-        // Fast horizon and elevation cone cull without sqrt:
-        // top_z / sqrt(range_sq) >= min_sin_el <==> top_z^2 >= range_sq * min_sin_el^2
+        // Pure algebraic elevation cone test (zero sqrt / asin / atan2 in hot loop!)
         if top_z > 0.0 {
           let range_sq = dx * dx + dy * dy + dz * dz
           if top_z * top_z >= range_sq * min_sin_el_sq {
-            let range = range_sq.sqrt()
-            let sin_el = top_z / range
-            let el_deg = @math.asin(if sin_el > 1.0 { 1.0 } else { sin_el }) *
-              rad_to_deg
-            let top_s = sin_lat * cos_lon * dx +
-              sin_lat * sin_lon * dy -
-              cos_lat * dz
-            let top_e = -sin_lon * dx + cos_lon * dy
-            let mut az_rad = @math.atan2(-top_e, top_s) + pi
-            if az_rad < 0.0 {
-              az_rad = az_rad + two_pi
-            } else if az_rad >= two_pi {
-              az_rad = az_rad - two_pi
-            }
-            sim_state.sat_el_deg[i] = el_deg
-            sim_state.sat_az_deg[i] = az_rad * rad_to_deg
-            sim_state.sat_range_km[i] = range
-            sim_state.sat_visible[i] = true
+            status = status | 16
+            sim_state.visible_indices.push(i)
             vis_count = vis_count + 1
-          } else {
-            sim_state.sat_visible[i] = false
           }
-        } else {
-          sim_state.sat_visible[i] = false
         }
-      } else {
-        sim_state.sat_visible[i] = false
       }
+      sim_state.sat_status[i] = status
     } else {
-      sim_state.sat_ok[i] = false
-      sim_state.sat_visible[i] = false
+      sim_state.sat_status[i] = shell_bits
     }
     i = i + 1
   }
@@ -239,6 +235,31 @@ pub fn get_sat_ecef_z(idx : Int32) -> Double {
 }
 
 ///|
+/// Get bit-packed status byte for satellite `idx`:
+/// `bits 0..2 = shell_id (0..4)`, `bit 3 (8) = valid`, `bit 4 (16) = visible`.
+pub fn get_sat_status(idx : Int32) -> Int32 {
+  sim_state.sat_status[idx]
+}
+
+///|
+/// SWAR (SIMD Within A Register): Pack 4 consecutive satellite status bytes
+/// (`base_idx .. base_idx + 3`) into a single 32-bit integer word.
+pub fn get_sat_status_quad(base_idx : Int32) -> Int32 {
+  let n = sim_state.sat_status.length()
+  let b0 = if base_idx < n { sim_state.sat_status[base_idx] } else { 0 }
+  let b1 = if base_idx + 1 < n { sim_state.sat_status[base_idx + 1] } else { 0 }
+  let b2 = if base_idx + 2 < n { sim_state.sat_status[base_idx + 2] } else { 0 }
+  let b3 = if base_idx + 3 < n { sim_state.sat_status[base_idx + 3] } else { 0 }
+  b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+}
+
+///|
+/// Get satellite index at position `k` (`0 .. visible_count - 1`) in the visible list.
+pub fn get_visible_sat_index(k : Int32) -> Int32 {
+  sim_state.visible_indices[k]
+}
+
+///|
 /// Get satellite velocity magnitude (speed) in km/s (computed on-demand for selected satellite).
 pub fn get_sat_speed_kms(idx : Int32) -> Double {
   let sat = sim_state.satellites[idx]
@@ -254,39 +275,65 @@ pub fn get_sat_speed_kms(idx : Int32) -> Double {
 ///|
 /// Return 1 if satellite `idx` has a valid position, 0 otherwise.
 pub fn get_sat_valid(idx : Int32) -> Int32 {
-  if sim_state.sat_ok[idx] {
-    1
-  } else {
-    0
-  }
+  (sim_state.sat_status[idx] >> 3) & 1
 }
 
 ///|
 /// Return 1 if satellite `idx` is currently visible from the observer ground station.
 pub fn get_sat_visible(idx : Int32) -> Int32 {
-  if sim_state.sat_visible[idx] {
-    1
-  } else {
-    0
-  }
+  (sim_state.sat_status[idx] >> 4) & 1
 }
 
 ///|
-/// Get observer elevation angle (degrees) for satellite `idx`.
+/// Compute observer elevation angle (degrees) on-demand for satellite `idx`.
 pub fn get_sat_elevation_deg(idx : Int32) -> Double {
-  sim_state.sat_el_deg[idx]
+  let dx = sim_state.ecef_x[idx] - sim_state.obs_ox
+  let dy = sim_state.ecef_y[idx] - sim_state.obs_oy
+  let dz = sim_state.ecef_z[idx] - sim_state.obs_oz
+  let range = (dx * dx + dy * dy + dz * dz).sqrt()
+  if range <= 1.0e-9 {
+    return -90.0
+  }
+  let up_x = sim_state.obs_cos_lat * sim_state.obs_cos_lon
+  let up_y = sim_state.obs_cos_lat * sim_state.obs_sin_lon
+  let up_z = sim_state.obs_sin_lat
+  let sin_el = (up_x * dx + up_y * dy + up_z * dz) / range
+  let clamped = if sin_el > 1.0 {
+    1.0
+  } else if sin_el < -1.0 {
+    -1.0
+  } else {
+    sin_el
+  }
+  @math.asin(clamped) * rad_to_deg
 }
 
 ///|
-/// Get observer azimuth angle (degrees) for satellite `idx`.
+/// Compute observer azimuth angle (degrees) on-demand for satellite `idx`.
 pub fn get_sat_azimuth_deg(idx : Int32) -> Double {
-  sim_state.sat_az_deg[idx]
+  let dx = sim_state.ecef_x[idx] - sim_state.obs_ox
+  let dy = sim_state.ecef_y[idx] - sim_state.obs_oy
+  let dz = sim_state.ecef_z[idx] - sim_state.obs_oz
+  let top_s = sim_state.obs_sin_lat * sim_state.obs_cos_lon * dx +
+    sim_state.obs_sin_lat * sim_state.obs_sin_lon * dy -
+    sim_state.obs_cos_lat * dz
+  let top_e = -sim_state.obs_sin_lon * dx + sim_state.obs_cos_lon * dy
+  let mut az_rad = @math.atan2(-top_e, top_s) + pi
+  if az_rad < 0.0 {
+    az_rad = az_rad + two_pi
+  } else if az_rad >= two_pi {
+    az_rad = az_rad - two_pi
+  }
+  az_rad * rad_to_deg
 }
 
 ///|
-/// Get observer slant range (km) for satellite `idx`.
+/// Compute observer slant range (km) on-demand for satellite `idx`.
 pub fn get_sat_range_km(idx : Int32) -> Double {
-  sim_state.sat_range_km[idx]
+  let dx = sim_state.ecef_x[idx] - sim_state.obs_ox
+  let dy = sim_state.ecef_y[idx] - sim_state.obs_oy
+  let dz = sim_state.ecef_z[idx] - sim_state.obs_oz
+  (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 ///|

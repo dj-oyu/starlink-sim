@@ -26,12 +26,15 @@ export interface WasmSimExports {
   get_sat_ecef_y: (idx: number) => number;
   get_sat_ecef_z: (idx: number) => number;
   get_sat_speed_kms: (idx: number) => number;
+  get_sat_status: (idx: number) => number;
+  get_sat_status_quad: (base_idx: number) => number;
   get_sat_valid: (idx: number) => number;
   get_sat_visible: (idx: number) => number;
   get_sat_elevation_deg: (idx: number) => number;
   get_sat_azimuth_deg: (idx: number) => number;
   get_sat_range_km: (idx: number) => number;
   get_visible_count: () => number;
+  get_visible_sat_index: (k: number) => number;
   get_sat_satnum: (idx: number) => number;
   get_sat_shell: (idx: number) => number;
   get_sat_inclination_deg: (idx: number) => number;
@@ -170,10 +173,14 @@ export class StarlinkSimEngine {
   public api!: WasmSimExports;
   public count = 0;
   public starlinkIds: Int32Array = new Int32Array(0);
-  public validFlags: Uint8Array = new Uint8Array(0);
-  public visibleFlags: Uint8Array = new Uint8Array(0);
-  public shellIds: Uint8Array = new Uint8Array(0);
-  public visibleIndices: Int32Array = new Int32Array(0);
+  /**
+   * Unified bit-packed status buffer (4-byte aligned for 32-bit SWAR quad operations):
+   * - bits 0..2 (`status & 7`): shellId (0..4)
+   * - bit 3 (`status & 8`): valid flag
+   * - bit 4 (`status & 16`): visible from ground station flag
+   */
+  public satStatus: Uint8Array = new Uint8Array(0);
+  public satStatusU32: Uint32Array = new Uint32Array(0);
   public visibleCount = 0;
   public shellCounts: number[] = [0, 0, 0, 0, 0];
   public sunDirectionThree: [number, number, number] = [1, 0, 0];
@@ -208,7 +215,7 @@ export class StarlinkSimEngine {
       name: this.getSatName(idx),
       satnum: this.api.get_sat_satnum(idx),
       intlDesig: '',
-      shellId: this.shellIds[idx],
+      shellId: this.satStatus[idx] & 7,
       inclinationDeg: this.api.get_sat_inclination_deg(idx),
     };
   }
@@ -329,13 +336,13 @@ export class StarlinkSimEngine {
     const total = this.api.get_satellite_count();
     this.count = total;
     this.starlinkIds = new Int32Array(tempStarlinkIds);
-    this.validFlags = new Uint8Array(total);
-    this.visibleFlags = new Uint8Array(total);
-    this.visibleIndices = new Int32Array(total);
+    const alignedBytes = ((total + 3) & ~3);
+    const statusBuf = new ArrayBuffer(alignedBytes);
+    this.satStatus = new Uint8Array(statusBuf, 0, total);
+    this.satStatusU32 = new Uint32Array(statusBuf);
     this.visibleCount = 0;
-    this.shellIds = new Uint8Array(total);
     for (let i = 0; i < total; i++) {
-      this.shellIds[i] = this.api.get_sat_shell(i);
+      this.satStatus[i] = this.api.get_sat_status(i);
     }
     if (epochCount > 0) {
       this.defaultEpochUnixMs = epochSum / epochCount;
@@ -376,7 +383,8 @@ export class StarlinkSimEngine {
 
   getSatelliteTelemetry(idx: number): SatelliteTelemetry | null {
     if (!this.api || idx < 0 || idx >= this.count) return null;
-    const shellId = this.shellIds[idx];
+    const status = this.satStatus[idx];
+    const shellId = status & 7;
     const shell = SHELL_INFO[shellId] ?? SHELL_INFO[0];
     const invR = 1.0 / EARTH_RADIUS_KM;
     const ex = this.api.get_sat_ecef_x(idx);
@@ -394,7 +402,7 @@ export class StarlinkSimEngine {
       lonDeg: this.api.get_sat_lon_deg(idx),
       altKm: this.api.get_sat_alt_km(idx),
       speedKms: this.api.get_sat_speed_kms(idx),
-      visible: this.visibleFlags[idx] === 1,
+      visible: (status & 16) !== 0,
       elevationDeg: this.api.get_sat_elevation_deg(idx),
       azimuthDeg: this.api.get_sat_azimuth_deg(idx),
       rangeKm: this.api.get_sat_range_km(idx),

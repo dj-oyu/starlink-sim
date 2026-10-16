@@ -50,6 +50,10 @@ pub fn get_sat_shell(Int) -> Int
 
 pub fn get_sat_speed_kms(Int) -> Double
 
+pub fn get_sat_status(Int) -> Int
+
+pub fn get_sat_status_quad(Int) -> Int
+
 pub fn get_sat_valid(Int) -> Int
 
 pub fn get_sat_visible(Int) -> Int
@@ -63,6 +67,8 @@ pub fn get_sun_ecef_y() -> Double
 pub fn get_sun_ecef_z() -> Double
 
 pub fn get_visible_count() -> Int
+
+pub fn get_visible_sat_index(Int) -> Int
 
 pub fn gstime(Double) -> Double
 

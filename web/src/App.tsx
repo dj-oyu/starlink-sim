@@ -137,17 +137,18 @@ function OverheadSatellitesPanel({
       const secBucket = Math.floor(performance.now() / 3000);
       if (secBucket !== lastSecRef.current) {
         lastSecRef.current = secBucket;
-        const indices = engine.visibleIndices;
-        const vLen = engine.visibleCount;
+        const api = engine.api;
+        const satStatus = engine.satStatus;
+        const vLen = api.get_visible_count();
         const topIndices = new Int32Array(25);
         const topEls = new Float32Array(25);
         let topCount = 0;
 
         for (let i = 0; i < vLen; i++) {
-          const idx = indices[i];
-          const shId = engine.shellIds[idx];
+          const idx = api.get_visible_sat_index(i);
+          const shId = satStatus[idx] & 7;
           if (!(enabledShells[shId] ?? true)) continue;
-          const el = engine.api.get_sat_elevation_deg(idx);
+          const el = api.get_sat_elevation_deg(idx);
           if (topCount < 25 || el > topEls[topCount - 1]) {
             let insertAt = topCount < 25 ? topCount++ : 24;
             while (insertAt > 0 && topEls[insertAt - 1] < el) {
@@ -166,9 +167,9 @@ function OverheadSatellitesPanel({
           nextItems[i] = {
             index: idx,
             name: engine.getSatName(idx),
-            satnum: engine.api.get_sat_satnum(idx),
+            satnum: api.get_sat_satnum(idx),
             el: topEls[i],
-            range: engine.api.get_sat_range_km(idx),
+            range: api.get_sat_range_km(idx),
           };
         }
         setItems(nextItems);
@@ -433,18 +434,20 @@ export function App() {
     // 2. Check satellite points hit in front of Earth
     if (pointsRef.current && engine) {
       const satHits = raycaster.intersectObject(pointsRef.current, false);
+      const satStatus = engine.satStatus;
       for (const hit of satHits) {
         if (hit.distance < earthDist && typeof hit.index === 'number') {
           const idx = hit.index;
-          if (
-            idx >= 0 &&
-            idx < engine.count &&
-            engine.validFlags[idx] &&
-            (enabledShells[engine.shellIds[idx]] ?? true) &&
-            (!searchMatchIndices || searchMatchIndices.has(idx))
-          ) {
-            setSelectedSatIndex(idx);
-            return;
+          if (idx >= 0 && idx < engine.count) {
+            const st = satStatus[idx];
+            if (
+              (st & 8) !== 0 &&
+              (enabledShells[st & 7] ?? true) &&
+              (!searchMatchIndices || searchMatchIndices.has(idx))
+            ) {
+              setSelectedSatIndex(idx);
+              return;
+            }
           }
         }
       }
