@@ -638,3 +638,12 @@
 .fab-group .fab:last-child {
   border-radius: 0 0 20px 20px;
 }
+
+/* Sky plot (az/el chart of satellites above the ground station) */
+.sky-plot {
+  display: block;
+  margin: 8px auto 4px;
+  cursor: crosshair;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.55);
+}

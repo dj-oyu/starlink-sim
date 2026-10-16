@@ -12,6 +12,7 @@ import {
   FullPerfSnapshot,
   ViewCommands,
 } from './components/ConstellationView';
+import { SkyPlot } from './components/SkyPlot';
 import { EarthVisualSettings } from './components/EarthGlobe';
 import {
   PerfMonitorPanel,
@@ -868,6 +869,17 @@ export function App() {
               }
             />
           </div>
+
+          {observer.enabled && (
+            <SkyPlot
+              engine={engine}
+              observer={observer}
+              enabledShells={enabledShells}
+              selectedSatIndex={selectedSatIndex}
+              onSelectSat={setSelectedSatIndex}
+              subscribePerf={subscribePerf}
+            />
+          )}
 
           {observer.enabled && (
             <OverheadSatellitesPanel
