@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { collectDeviceInfo, copyText } from '../util/clipboard';
+import { readHitches } from '../fiber/PreactFiber';
 import { FullPerfSnapshot } from './ConstellationView';
 
 export type PerfListener = (perf: FullPerfSnapshot) => void;
@@ -206,6 +207,8 @@ export function PerfMonitorPanel({
     const report = {
       timestamp: new Date().toISOString(),
       device: collectDeviceInfo(),
+      uptimeSec: Math.round(performance.now() / 1000),
+      slowFrames: readHitches(), // frames > 25 ms: age, duration, ms since last input, phase within the 3 s list refresh
       satellitesTracked: satCount,
       fps: Number(perf.fps.toFixed(1)),
       minFps: Number(perf.minFps.toFixed(1)),

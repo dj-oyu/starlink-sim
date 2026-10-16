@@ -55,6 +55,8 @@ moon test            # テスト
 moon fmt && moon info
 ```
 
+本番ビルドで実機を確認する場合は `npm run serve:lan`(ビルド後に `vite preview --host --port 4173`)を使います。dev サーバーには `preact/debug` や HMR などのオーバーヘッドがあり、フレームの乱れの原因の切り分けに向きません。
+
 ## 外部素材と TLE(初回起動時に自動取得)
 
 次のファイルは出典・再配布条件の都合でリポジトリに含めていません(`.gitignore` 済み)。`npm run dev` / `npm run build` の前に `web/scripts/fetch-assets.mjs` が自動で取得します。存在するファイルは再取得しません。
