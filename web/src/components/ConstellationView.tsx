@@ -639,7 +639,7 @@ export function ConstellationView({
       snap.wasmMemoryBytes = engine.wasmMemoryBytes;
       snap.jsHeapMb = jsHeapMb;
 
-      onFrameStats(currentSimMs, visCount, snap, telemetry);
+      onFrameStats(currentSimMs, activeVisCount, snap, telemetry);
     }
   });
 
