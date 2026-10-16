@@ -19,8 +19,8 @@ repository = ""
 
 license = "Apache-2.0"
 
-keywords = [ ]
+keywords = [ "sgp4", "satellite", "starlink", "orbit", "wasm" ]
 
 preferred_target = "wasm"
 
-description = ""
+description = "SGP4 orbit propagation for the Starlink constellation, compiled to WebAssembly"
