@@ -37,22 +37,175 @@ const CITY_PRESETS: CityPreset[] = [
 
 const SPEED_OPTIONS = [-1000, -100, -10, -1, 1, 10, 60, 300, 1000];
 
+const sharedDateUtc = new Date();
+const sharedDateJst = new Date();
+
+function pad2(n: number): string {
+  return n < 10 ? '0' + n : String(n);
+}
+
 function formatUtcIso(ms: number): string {
-  const d = new Date(ms);
-  if (isNaN(d.getTime())) return '----';
-  return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  sharedDateUtc.setTime(ms);
+  const y = sharedDateUtc.getUTCFullYear();
+  if (isNaN(y)) return '----';
+  return (
+    y +
+    '-' +
+    pad2(sharedDateUtc.getUTCMonth() + 1) +
+    '-' +
+    pad2(sharedDateUtc.getUTCDate()) +
+    ' ' +
+    pad2(sharedDateUtc.getUTCHours()) +
+    ':' +
+    pad2(sharedDateUtc.getUTCMinutes()) +
+    ':' +
+    pad2(sharedDateUtc.getUTCSeconds()) +
+    ' UTC'
+  );
 }
 
 function formatJst(ms: number): string {
-  const d = new Date(ms + 9 * 3600 * 1000);
-  if (isNaN(d.getTime())) return '----';
-  return '(' + d.toISOString().replace('T', ' ').slice(0, 19) + ' JST)';
+  sharedDateJst.setTime(ms + 9 * 3600 * 1000);
+  const y = sharedDateJst.getUTCFullYear();
+  if (isNaN(y)) return '----';
+  return (
+    '(' +
+    y +
+    '-' +
+    pad2(sharedDateJst.getUTCMonth() + 1) +
+    '-' +
+    pad2(sharedDateJst.getUTCDate()) +
+    ' ' +
+    pad2(sharedDateJst.getUTCHours()) +
+    ':' +
+    pad2(sharedDateJst.getUTCMinutes()) +
+    ':' +
+    pad2(sharedDateJst.getUTCSeconds()) +
+    ' JST)'
+  );
 }
 
 function toDatetimeLocalValue(ms: number): string {
-  const d = new Date(ms);
-  if (isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 16);
+  sharedDateUtc.setTime(ms);
+  const y = sharedDateUtc.getUTCFullYear();
+  if (isNaN(y)) return '';
+  return (
+    y +
+    '-' +
+    pad2(sharedDateUtc.getUTCMonth() + 1) +
+    '-' +
+    pad2(sharedDateUtc.getUTCDate()) +
+    'T' +
+    pad2(sharedDateUtc.getUTCHours()) +
+    ':' +
+    pad2(sharedDateUtc.getUTCMinutes())
+  );
+}
+
+interface OverheadItem {
+  index: number;
+  name: string;
+  satnum: number;
+  el: number;
+  range: number;
+}
+
+function OverheadSatellitesPanel({
+  engine,
+  observer,
+  enabledShells,
+  selectedSatIndex,
+  onSelectSat,
+  subscribePerf,
+}: {
+  engine: StarlinkSimEngine;
+  observer: ObserverConfig;
+  enabledShells: boolean[];
+  selectedSatIndex: number | null;
+  onSelectSat: (idx: number) => void;
+  subscribePerf: (cb: PerfListener) => () => void;
+}) {
+  const countSpanRef = useRef<HTMLSpanElement>(null);
+  const [items, setItems] = useState<OverheadItem[]>([]);
+  const lastSecRef = useRef(-1);
+
+  useEffect(() => {
+    const updateList = () => {
+      if (countSpanRef.current) {
+        countSpanRef.current.textContent = String(engine.visibleCount);
+      }
+      const secBucket = Math.floor(performance.now() / 3000);
+      if (secBucket !== lastSecRef.current) {
+        lastSecRef.current = secBucket;
+        const indices = engine.visibleIndices;
+        const vLen = engine.visibleCount;
+        const topIndices = new Int32Array(25);
+        const topEls = new Float32Array(25);
+        let topCount = 0;
+
+        for (let i = 0; i < vLen; i++) {
+          const idx = indices[i];
+          const shId = engine.shellIds[idx];
+          if (!(enabledShells[shId] ?? true)) continue;
+          const el = engine.api.get_sat_elevation_deg(idx);
+          if (topCount < 25 || el > topEls[topCount - 1]) {
+            let insertAt = topCount < 25 ? topCount++ : 24;
+            while (insertAt > 0 && topEls[insertAt - 1] < el) {
+              topEls[insertAt] = topEls[insertAt - 1];
+              topIndices[insertAt] = topIndices[insertAt - 1];
+              insertAt--;
+            }
+            topEls[insertAt] = el;
+            topIndices[insertAt] = idx;
+          }
+        }
+
+        const nextItems = new Array<OverheadItem>(topCount);
+        for (let i = 0; i < topCount; i++) {
+          const idx = topIndices[i];
+          nextItems[i] = {
+            index: idx,
+            name: engine.getSatName(idx),
+            satnum: engine.api.get_sat_satnum(idx),
+            el: topEls[i],
+            range: engine.api.get_sat_range_km(idx),
+          };
+        }
+        setItems(nextItems);
+      }
+    };
+
+    updateList();
+    return subscribePerf(updateList);
+  }, [engine, observer, enabledShells, subscribePerf]);
+
+  return (
+    <div>
+      <span className="field-label">
+        Overhead Satellites (
+        <span ref={countSpanRef}>{engine.visibleCount}</span> in Dish FOV):
+      </span>
+      <div className="sat-list">
+        {items.map((s) => (
+          <div
+            key={s.index}
+            className={`sat-list-item ${selectedSatIndex === s.index ? 'selected' : ''}`}
+            onClick={() => onSelectSat(s.index)}
+          >
+            <span style={{ fontWeight: 600, color: '#a7f3d0' }}>{s.name}</span>
+            <span style={{ fontFamily: 'monospace', color: '#94a3b8' }}>
+              El {s.el.toFixed(1)}° · {s.range.toFixed(0)} km
+            </span>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div style={{ fontSize: '11px', color: '#64748b' }}>
+            No satellites above {observer.minElDeg}° elevation.
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function App() {
@@ -115,9 +268,7 @@ export function App() {
   const [pickGroundStationMode, setPickGroundStationMode] = useState(false);
 
   // Live Frame Telemetry & Performance Profiler (Direct subscription, zero VNode churn)
-  const [visibleCount, setVisibleCount] = useState(0);
-  const [overheadTick, setOverheadTick] = useState(0);
-  const lastOverheadSecRef = useRef(0);
+  const lastDatetimeMinRef = useRef(-1);
   const [showPerfPanel, setShowPerfPanel] = useState(true);
   const latestPerfRef = useRef<FullPerfSnapshot>({
     fps: 60,
@@ -137,12 +288,13 @@ export function App() {
     wasmMemoryBytes: 0,
     jsHeapMb: null,
   });
-  const perfListenersRef = useRef<Set<PerfListener>>(new Set());
+  const perfListenersRef = useRef<PerfListener[]>([]);
   const subscribePerf = useMemo(
     () => (cb: PerfListener) => {
-      perfListenersRef.current.add(cb);
+      perfListenersRef.current.push(cb);
       return () => {
-        perfListenersRef.current.delete(cb);
+        const idx = perfListenersRef.current.indexOf(cb);
+        if (idx !== -1) perfListenersRef.current.splice(idx, 1);
       };
     },
     [],
@@ -195,33 +347,6 @@ export function App() {
     return { searchMatchIndices: set, searchResultsList: list };
   }, [engine, searchQuery, satVersion]);
 
-  // Overhead visible satellites list (sorted by highest elevation, throttled to once every 2 seconds)
-  const overheadSatellites = useMemo(() => {
-    if (!engine || !observer.enabled) return [];
-    const indices = engine.visibleIndices;
-    const raw: { index: number; el: number }[] = [];
-    for (let i = 0; i < indices.length; i++) {
-      const idx = indices[i];
-      const shId = engine.shellIds[idx];
-      if (!(enabledShells[shId] ?? true)) continue;
-      raw.push({ index: idx, el: engine.api.get_sat_elevation_deg(idx) });
-    }
-    raw.sort((a, b) => b.el - a.el);
-    const limit = Math.min(raw.length, 30);
-    const items = new Array(limit);
-    for (let i = 0; i < limit; i++) {
-      const { index, el } = raw[i];
-      items[i] = {
-        index,
-        name: engine.getSatName(index),
-        satnum: engine.api.get_sat_satnum(index),
-        el,
-        range: engine.api.get_sat_range_km(index),
-      };
-    }
-    return items;
-  }, [engine, overheadTick, visibleCount, observer.enabled, enabledShells]);
-
   const syncClockDom = (ms: number) => {
     if (utcClockRef.current) utcClockRef.current.textContent = formatUtcIso(ms);
     if (jstClockRef.current) jstClockRef.current.textContent = formatJst(ms);
@@ -231,7 +356,13 @@ export function App() {
         Math.max(-1440, Math.min(1440, offsetMins)),
       );
     }
-    if (datetimeInputRef.current && document.activeElement !== datetimeInputRef.current) {
+    const minBucket = Math.floor(ms / 60000);
+    if (
+      minBucket !== lastDatetimeMinRef.current &&
+      datetimeInputRef.current &&
+      document.activeElement !== datetimeInputRef.current
+    ) {
+      lastDatetimeMinRef.current = minBucket;
       datetimeInputRef.current.value = toDatetimeLocalValue(ms);
     }
   };
@@ -244,7 +375,7 @@ export function App() {
   ) => {
     latestPerfRef.current = perf;
 
-    // 1. Direct DOM updates (Zero Preact re-renders / Zero VNode allocations!)
+    // Direct DOM updates (Zero Preact re-renders of App()!)
     syncClockDom(simTimeMs);
     if (topInRangeRef.current) {
       topInRangeRef.current.textContent = observer.enabled
@@ -257,19 +388,11 @@ export function App() {
     if (topSgp4MsRef.current) {
       topSgp4MsRef.current.textContent = `${perf.wasmPureSgp4Ms.toFixed(2)} ms`;
     }
-    for (const listener of perfListenersRef.current) {
-      listener(perf);
+    const listeners = perfListenersRef.current;
+    for (let i = 0; i < listeners.length; i++) {
+      listeners[i](perf);
     }
 
-    // 2. Only trigger Preact state if visible satellite count changed or every 2s for overhead list
-    const secBucket = Math.floor(performance.now() / 2000);
-    if (visCount !== visibleCount) {
-      setVisibleCount(visCount);
-    }
-    if (observer.enabled && secBucket !== lastOverheadSecRef.current) {
-      lastOverheadSecRef.current = secBucket;
-      setOverheadTick(secBucket);
-    }
     if (selTelemetry !== null || selectedTelemetry !== null) {
       setSelectedTelemetry(selTelemetry);
     }
@@ -431,7 +554,7 @@ export function App() {
           <div className="metric-item">
             <span className="metric-label">In Range ({observer.name.split(' ')[0]})</span>
             <span ref={topInRangeRef} className="metric-value emerald">
-              {observer.enabled ? `${visibleCount} sats` : 'OFF'}
+              {observer.enabled ? `${engine.visibleCount} sats` : 'OFF'}
             </span>
           </div>
           <div className="metric-item">
@@ -636,32 +759,14 @@ export function App() {
           </div>
 
           {observer.enabled && (
-            <div>
-              <span className="field-label">
-                Overhead Satellites ({visibleCount} in Dish FOV):
-              </span>
-              <div className="sat-list">
-                {overheadSatellites.map((s) => (
-                  <div
-                    key={s.index}
-                    className={`sat-list-item ${selectedSatIndex === s.index ? 'selected' : ''}`}
-                    onClick={() => setSelectedSatIndex(s.index)}
-                  >
-                    <span style={{ fontWeight: 600, color: '#a7f3d0' }}>
-                      {s.name}
-                    </span>
-                    <span style={{ fontFamily: 'monospace', color: '#94a3b8' }}>
-                      El {s.el.toFixed(1)}° · {s.range.toFixed(0)} km
-                    </span>
-                  </div>
-                ))}
-                {overheadSatellites.length === 0 && (
-                  <div style={{ fontSize: '11px', color: '#64748b' }}>
-                    No satellites above {observer.minElDeg}° elevation.
-                  </div>
-                )}
-              </div>
-            </div>
+            <OverheadSatellitesPanel
+              engine={engine}
+              observer={observer}
+              enabledShells={enabledShells}
+              selectedSatIndex={selectedSatIndex}
+              onSelectSat={setSelectedSatIndex}
+              subscribePerf={subscribePerf}
+            />
           )}
         </section>
 

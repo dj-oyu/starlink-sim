@@ -44,9 +44,35 @@ export function PerfMonitorPanel({
   useEffect(() => {
     const histTotal = new Float32Array(60);
     const histWasm = new Float32Array(60);
+    const xCoords = new Array<string>(60);
+    for (let i = 0; i < 60; i++) {
+      xCoords[i] = ((i / 59) * w).toFixed(1);
+    }
     let count = 0;
+    let prevHeapMb: number | null = null;
+    let prevTimeMs = performance.now();
+    let smoothedAllocKbPerSec = 0;
+    let gcSweepCount = 0;
 
     const applyPerf = (perf: FullPerfSnapshot) => {
+      const nowMs = performance.now();
+      const dtSec = Math.max(0.05, (nowMs - prevTimeMs) / 1000);
+      prevTimeMs = nowMs;
+
+      if (perf.jsHeapMb !== null) {
+        if (prevHeapMb !== null) {
+          const deltaMb = perf.jsHeapMb - prevHeapMb;
+          if (deltaMb < -0.15) {
+            gcSweepCount++;
+          } else if (deltaMb >= 0) {
+            const instKbPerSec = (deltaMb * 1024) / dtSec;
+            smoothedAllocKbPerSec =
+              smoothedAllocKbPerSec * 0.75 + instKbPerSec * 0.25;
+          }
+        }
+        prevHeapMb = perf.jsHeapMb;
+      }
+
       const totalCpuWorkMs =
         perf.wasmPureSgp4Ms +
         perf.wasmReadoutMs +
@@ -95,11 +121,10 @@ export function PerfMonitorPanel({
       if (count > 1) {
         let strTot = '';
         let strWasm = '';
-        const denom = count - 1;
         for (let i = 0; i < count; i++) {
-          const x = ((i / denom) * w).toFixed(1);
-          const yTot = (h - Math.min(1, histTotal[i] / maxMs) * (h - 4) - 2).toFixed(1);
-          const yWasm = (h - Math.min(1, histWasm[i] / maxMs) * (h - 4) - 2).toFixed(1);
+          const x = xCoords[i];
+          const yTot = ((h - Math.min(1, histTotal[i] / maxMs) * (h - 4) - 2) | 0);
+          const yWasm = ((h - Math.min(1, histWasm[i] / maxMs) * (h - 4) - 2) | 0);
           strTot += (i === 0 ? '' : ' ') + x + ',' + yTot;
           strWasm += (i === 0 ? '' : ' ') + x + ',' + yWasm;
         }
@@ -109,13 +134,15 @@ export function PerfMonitorPanel({
 
       if (drawCallsRef.current) drawCallsRef.current.textContent = `${perf.drawCalls} calls`;
       if (ptsTrisRef.current) {
-        ptsTrisRef.current.textContent = `${perf.points.toLocaleString()} pts · ${(perf.triangles / 1000).toFixed(1)}k tris`;
+        ptsTrisRef.current.textContent = `${perf.points} pts · ${((perf.triangles / 100) | 0) / 10}k tris`;
       }
       if (wasmMemRef.current) {
         wasmMemRef.current.textContent = `${(perf.wasmMemoryBytes / (1024 * 1024)).toFixed(2)} MB`;
       }
       if (jsHeapRef.current) {
-        jsHeapRef.current.textContent = `${perf.jsHeapMb ? `${perf.jsHeapMb.toFixed(1)} MB` : 'N/A'} · ${perf.programs} progs`;
+        jsHeapRef.current.textContent = perf.jsHeapMb
+          ? `${perf.jsHeapMb.toFixed(1)} MB (+${smoothedAllocKbPerSec.toFixed(0)} KB/s · GC:${gcSweepCount})`
+          : `N/A · ${perf.programs} progs`;
       }
     };
 

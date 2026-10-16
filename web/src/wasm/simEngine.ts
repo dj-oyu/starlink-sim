@@ -173,7 +173,8 @@ export class StarlinkSimEngine {
   public validFlags: Uint8Array = new Uint8Array(0);
   public visibleFlags: Uint8Array = new Uint8Array(0);
   public shellIds: Uint8Array = new Uint8Array(0);
-  public visibleIndices: number[] = [];
+  public visibleIndices: Int32Array = new Int32Array(0);
+  public visibleCount = 0;
   public shellCounts: number[] = [0, 0, 0, 0, 0];
   public sunDirectionThree: [number, number, number] = [1, 0, 0];
   public defaultEpochUnixMs: number = Date.now();
@@ -330,6 +331,8 @@ export class StarlinkSimEngine {
     this.starlinkIds = new Int32Array(tempStarlinkIds);
     this.validFlags = new Uint8Array(total);
     this.visibleFlags = new Uint8Array(total);
+    this.visibleIndices = new Int32Array(total);
+    this.visibleCount = 0;
     this.shellIds = new Uint8Array(total);
     for (let i = 0; i < total; i++) {
       this.shellIds[i] = this.api.get_sat_shell(i);
@@ -362,7 +365,9 @@ export class StarlinkSimEngine {
     const sx = api.get_sun_ecef_x();
     const sy = api.get_sun_ecef_y();
     const sz = api.get_sun_ecef_z();
-    this.sunDirectionThree = [sx, sz, -sy];
+    this.sunDirectionThree[0] = sx;
+    this.sunDirectionThree[1] = sz;
+    this.sunDirectionThree[2] = -sy;
 
     this.wasmPureSgp4Ms = t1 - t0;
     this.lastPropagateMs = t1 - t0;

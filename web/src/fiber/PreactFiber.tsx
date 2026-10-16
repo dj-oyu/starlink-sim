@@ -69,15 +69,16 @@ export function Canvas({
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [ctxState, setCtxState] = useState<ThreeContextState | null>(null);
-  const frameListenersRef = useRef<Set<FrameCallback>>(new Set());
+  const frameListenersRef = useRef<FrameCallback[]>([]);
   const onCanvasClickRef = useRef(onCanvasClick);
   onCanvasClickRef.current = onCanvasClick;
 
   const registerFrame = useMemo(
     () => (cb: FrameCallback) => {
-      frameListenersRef.current.add(cb);
+      frameListenersRef.current.push(cb);
       return () => {
-        frameListenersRef.current.delete(cb);
+        const idx = frameListenersRef.current.indexOf(cb);
+        if (idx !== -1) frameListenersRef.current.splice(idx, 1);
       };
     },
     [],
@@ -206,8 +207,9 @@ export function Canvas({
       }
 
       controls.update();
-      for (const cb of frameListenersRef.current) {
-        cb(state, delta);
+      const listeners = frameListenersRef.current;
+      for (let i = 0; i < listeners.length; i++) {
+        listeners[i](state, delta);
       }
 
       const r0 = performance.now();

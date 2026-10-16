@@ -376,7 +376,7 @@ export function ConstellationView({
     const valid = engine.validFlags;
     const vis = engine.visibleFlags;
     const visList = engine.visibleIndices;
-    visList.length = 0;
+    let visCount = 0;
     const shellIds = engine.shellIds;
     const dstPos = posAttr.array as Float32Array;
     const dstCol = colAttr.array as Float32Array;
@@ -430,7 +430,7 @@ export function ConstellationView({
       const isVis = obsEnabled ? api.get_sat_visible(i) : 0;
       vis[i] = isVis;
       if (isVis) {
-        visList.push(i);
+        visList[visCount++] = i;
       }
 
       let code: number;
@@ -465,6 +465,7 @@ export function ConstellationView({
       }
     }
 
+    engine.visibleCount = visCount;
     posAttr.needsUpdate = true;
     if (styleDirty) {
       colAttr.needsUpdate = true;
@@ -485,7 +486,7 @@ export function ConstellationView({
 
     if (commLinesGeomRef.current) {
       if (obsEnabled && showCommLinks) {
-        const linkCount = Math.min(visList.length, 600);
+        const linkCount = Math.min(visCount, 600);
         const [ox, oy, oz] = obsThreePos;
         let ptr = 0;
         for (let k = 0; k < linkCount; k++) {
@@ -649,7 +650,7 @@ export function ConstellationView({
       snap.wasmMemoryBytes = engine.wasmMemoryBytes;
       snap.jsHeapMb = jsHeapMb;
 
-      onFrameStats(currentSimMs, engine.visibleIndices.length, snap, telemetry);
+      onFrameStats(currentSimMs, visCount, snap, telemetry);
     }
   });
 
