@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import * as THREE from 'three';
-import { Canvas } from './fiber/PreactFiber';
+import { Canvas, threeHandleRef } from './fiber/PreactFiber';
+import { runGpuBench } from './util/gpuBench';
 import {
   StarlinkSimEngine,
   ObserverConfig,
@@ -453,6 +454,21 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedSatIndex]);
+
+  // On-device GPU benchmark (Perf panel): needs to change the app's visual settings between runs
+  const runGpuBenchFromPanel = async (onProgress: (msg: string) => void) => {
+    const handle = threeHandleRef.current;
+    if (!handle) throw new Error('renderer not ready');
+    return runGpuBench({
+      handle,
+      settings: visualSettings,
+      applySettings: async (next) => {
+        setVisualSettings(next);
+        await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      },
+      onProgress,
+    });
+  };
 
   const handleFrameStats = (
     simTimeMs: number,
@@ -1008,6 +1024,7 @@ export function App() {
           subscribePerf={subscribePerf}
           satCount={engine.count}
           onClose={() => setShowPerfPanel(false)}
+          onRunGpuBench={runGpuBenchFromPanel}
         />
       )}
 

@@ -35,6 +35,7 @@ iOS Safari(JavaScriptCore)は、この wasm をデスクトップの Chrome よ�
 
 - `?slices=N`(例: `http://…:5173/?slices=4`)で分割数を強制できます(0 または未指定で自動)。
 - Perf Stats の「Copy JSON」には、端末情報と実際の分割数(`wasmSlicesPerFrame`)が含まれます。
+- Perf Stats の「🧪 GPU Bench」は、端末上の GPU 負荷を測ります(約 40 秒)。Safari には GPU タイマーがないため、描画を連続実行して最後に `readPixels` で完了を待つ方式です。ピクセル比、地球シェーダ(雲・大気・昼夜・モード)、衛星・航跡・通信リンク別のコストと、HUD の `backdrop-filter` の影響(実フレームレート)を比較し、結果をコピーできます。
 - `/bench.html` は描画を含まない計測ページです。端末ごとの wasm 速度を測れます(開発用。公開する場合は削除してください)。
 
 MoonBit 側だけを操作する場合(リポジトリ直下):

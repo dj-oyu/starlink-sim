@@ -30,6 +30,9 @@ export interface ThreeContextState {
 
 const ThreeContext = createContext<ThreeContextState | null>(null);
 
+/** Live handle to the renderer/scene for tools outside the canvas tree (e.g. the GPU bench). */
+export const threeHandleRef: { current: ThreeContextState | null } = { current: null };
+
 export function useThree(): ThreeContextState {
   const ctx = useContext(ThreeContext);
   if (!ctx) {
@@ -139,6 +142,7 @@ export function Canvas({
       registerFrame,
     };
     setCtxState(state);
+    threeHandleRef.current = state;
 
     const handleResize = () => {
       if (!container) return;

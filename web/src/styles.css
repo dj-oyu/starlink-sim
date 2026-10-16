@@ -751,3 +751,13 @@ label,
 .chip {
   white-space: nowrap;
 }
+
+/* GPU bench toggles (set on <html> by util/gpuBench.ts) */
+.bench-no-blur .hud-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.bench-hud-hidden .hud-root {
+  visibility: hidden;
+}

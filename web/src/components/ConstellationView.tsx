@@ -276,6 +276,7 @@ export function ConstellationView({
       blending: THREE.AdditiveBlending,
     });
     const pts = new THREE.Points(ptsGeom, ptsMat);
+    pts.name = 'satellites';
     pts.frustumCulled = false;
     group.add(pts);
     pointsRef.current = pts;
@@ -293,6 +294,7 @@ export function ConstellationView({
       blending: THREE.AdditiveBlending,
     });
     const trailLines = new THREE.LineSegments(trailGeom, trailMat);
+    trailLines.name = 'trails';
     trailLines.frustumCulled = false;
     group.add(trailLines);
     trailLineRef.current = trailLines;
@@ -372,6 +374,7 @@ export function ConstellationView({
       blending: THREE.AdditiveBlending,
     });
     const commSegments = new THREE.LineSegments(commGeom, commMat);
+    commSegments.name = 'commlinks';
     commSegments.frustumCulled = false;
     obsGroup.add(commSegments);
     commLinesGeomRef.current = commGeom;

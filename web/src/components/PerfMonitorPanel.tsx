@@ -9,6 +9,8 @@ interface PerfMonitorPanelProps {
   subscribePerf: (cb: PerfListener) => () => void;
   satCount: number;
   onClose: () => void;
+  /** Runs the on-device GPU benchmark; resolves to the report object. */
+  onRunGpuBench?: (onProgress: (msg: string) => void) => Promise<Record<string, unknown>>;
 }
 
 export function PerfMonitorPanel({
@@ -16,10 +18,13 @@ export function PerfMonitorPanel({
   subscribePerf,
   satCount,
   onClose,
+  onRunGpuBench,
 }: PerfMonitorPanelProps) {
   const [copied, setCopied] = useState(false);
   // Shown when automatic copying is blocked (e.g. some browsers): select-and-copy by hand
   const [manualText, setManualText] = useState<string | null>(null);
+  const [modalCopied, setModalCopied] = useState(false);
+  const [benchMsg, setBenchMsg] = useState<string | null>(null); // non-null while the GPU bench runs
 
   const fpsValRef = useRef<HTMLDivElement>(null);
   const minFpsValRef = useRef<HTMLDivElement>(null);
@@ -176,6 +181,20 @@ export function PerfMonitorPanel({
     return subscribePerf(applyPerf);
   }, [subscribePerf, latestPerfRef]);
 
+  const handleGpuBench = async () => {
+    if (!onRunGpuBench || benchMsg !== null) return;
+    setBenchMsg('準備中…');
+    try {
+      const report = await onRunGpuBench((m) => setBenchMsg(m));
+      setModalCopied(false);
+      setManualText(JSON.stringify(report, null, 2));
+    } catch (e: any) {
+      setManualText(`GPU bench failed: ${e?.message ?? e}`);
+    } finally {
+      setBenchMsg(null);
+    }
+  };
+
   const handleCopyReport = async () => {
     const perf = latestPerfRef.current;
     const totalCpuWorkMs =
@@ -242,6 +261,11 @@ export function PerfMonitorPanel({
       <div className="section-header">
         <span>📊 Render & Wasm SGP4 Profiler</span>
         <div style={{ display: 'flex', gap: '5px' }}>
+          {onRunGpuBench && (
+            <button className="chip" onClick={handleGpuBench} disabled={benchMsg !== null}>
+              🧪 GPU Bench
+            </button>
+          )}
           <button className="chip" onClick={handleCopyReport}>
             {copied ? '✓ Copied JSON' : '📋 Copy JSON'}
           </button>
@@ -420,6 +444,19 @@ export function PerfMonitorPanel({
           </div>
         </div>
       </div>
+      {benchMsg !== null && (
+        <div className="modal-backdrop">
+          <div className="hud-panel modal-card">
+            <div className="section-header">
+              <span>GPU ベンチ実行中 (約 40 秒)</span>
+            </div>
+            <div style={{ fontSize: '13px', color: '#7dd3fc' }}>{benchMsg}</div>
+            <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+              画面に触れず、このままお待ちください。
+            </div>
+          </div>
+        </div>
+      )}
       {manualText !== null && (
         <div className="modal-backdrop" onClick={() => setManualText(null)}>
           <div
@@ -427,10 +464,18 @@ export function PerfMonitorPanel({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="section-header">
-              <span>自動コピーできませんでした。下のテキストを選択してコピーしてください</span>
-              <button className="btn" onClick={() => setManualText(null)}>
-                ✕
-              </button>
+              <span>結果 (Copy を押すか、テキストを選択してコピー)</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  className="btn active"
+                  onClick={async () => setModalCopied(await copyText(manualText))}
+                >
+                  {modalCopied ? '✓ Copied' : '📋 Copy'}
+                </button>
+                <button className="btn" onClick={() => setManualText(null)}>
+                  ✕
+                </button>
+              </div>
             </div>
             <textarea
               className="tle-textarea"
