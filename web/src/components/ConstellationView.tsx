@@ -34,6 +34,7 @@ interface ConstellationViewProps {
   pointsRef: { current: THREE.Points | null };
   earthMeshRef: { current: THREE.Mesh | null };
   viewCommandsRef?: { current: ViewCommands | null };
+  showTrails?: boolean;
   onFrameStats: (
     simTimeMs: number,
     visibleCount: number,
@@ -156,6 +157,25 @@ const SAT_POINTS_FRAG = /* glsl */ `
   }
 `;
 
+/** Motion trails: a short fading streak behind each satellite (a hint of motion, not an orbit). */
+const TRAIL_LEN = 0.035; // world units (Earth radius = 1)
+const TRAIL_DIR_PERIOD_MS = 2000; // sim-time spacing used to estimate each satellite's heading
+const TRAIL_VERT = /* glsl */ `
+  attribute float aEnd;
+  varying float vEnd;
+  void main() {
+    vEnd = aEnd;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const TRAIL_FRAG = /* glsl */ `
+  uniform float uOpacity;
+  varying float vEnd;
+  void main() {
+    gl_FragColor = vec4(0.55, 0.82, 1.0, vEnd * vEnd * 0.5 * uOpacity);
+  }
+`;
+
 const _followCurPos = new THREE.Vector3();
 const _followDelta = new THREE.Vector3();
 
@@ -175,6 +195,7 @@ export function ConstellationView({
   pointsRef,
   earthMeshRef,
   viewCommandsRef,
+  showTrails = true,
   onFrameStats,
 }: ConstellationViewProps) {
   const { scene, camera, controls } = useThree();
@@ -189,12 +210,20 @@ export function ConstellationView({
   const obsRingGeomRef = useRef<THREE.BufferGeometry | null>(null);
 
   const satCount = engine.count;
+  const trailLineRef = useRef<THREE.LineSegments | null>(null);
+  const trailMatRef = useRef<THREE.ShaderMaterial | null>(null);
+  const trailStateRef = useRef({ prevSimMs: NaN });
 
   const {
     posAttr,
     styleAttr,
     commLineAttr,
     commLinePositions,
+    trailPos,
+    trailPosAttr,
+    trailEndAttr,
+    trailDir,
+    prevPos,
   } = useMemo(() => {
     const count = Math.max(satCount, 1);
     const pos = new Float32Array(count * 3);
@@ -209,11 +238,23 @@ export function ConstellationView({
     const commAttr = new THREE.BufferAttribute(comm, 3);
     commAttr.setUsage(THREE.DynamicDrawUsage);
 
+    // Trails: 2 vertices per satellite (tail, head); aEnd = 0 at the tail, 1 at the head
+    const tPos = new Float32Array(count * 6);
+    const tPosAttr = new THREE.BufferAttribute(tPos, 3);
+    tPosAttr.setUsage(THREE.DynamicDrawUsage);
+    const tEnd = new Float32Array(count * 2);
+    for (let i = 0; i < count; i++) tEnd[i * 2 + 1] = 1;
+
     return {
       posAttr: pAttr,
       styleAttr: stAttr,
       commLineAttr: commAttr,
       commLinePositions: comm,
+      trailPos: tPos,
+      trailPosAttr: tPosAttr,
+      trailEndAttr: new THREE.BufferAttribute(tEnd, 1),
+      trailDir: new Float32Array(count * 3),
+      prevPos: new Float32Array(count * 3),
     };
   }, [satCount]);
 
@@ -237,6 +278,24 @@ export function ConstellationView({
     pts.frustumCulled = false;
     group.add(pts);
     pointsRef.current = pts;
+
+    // 1b. Motion trails (additive streaks behind each satellite)
+    const trailGeom = new THREE.BufferGeometry();
+    trailGeom.setAttribute('position', trailPosAttr);
+    trailGeom.setAttribute('aEnd', trailEndAttr);
+    const trailMat = new THREE.ShaderMaterial({
+      vertexShader: TRAIL_VERT,
+      fragmentShader: TRAIL_FRAG,
+      uniforms: { uOpacity: { value: 0 } },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const trailLines = new THREE.LineSegments(trailGeom, trailMat);
+    trailLines.frustumCulled = false;
+    group.add(trailLines);
+    trailLineRef.current = trailLines;
+    trailMatRef.current = trailMat;
 
     // 2. Selected Satellite Marker
     const selGroup = new THREE.Group();
@@ -322,8 +381,10 @@ export function ConstellationView({
     return () => {
       scene.remove(group);
       pointsRef.current = null;
+      trailLineRef.current = null;
+      trailMatRef.current = null;
     };
-  }, [scene, posAttr, styleAttr, commLineAttr]);
+  }, [scene, posAttr, styleAttr, commLineAttr, trailPosAttr, trailEndAttr]);
 
   // Keep MoonBit observer & Ground Station geometry synced
   const obsThreePos = useMemo(() => {
@@ -569,14 +630,25 @@ export function ConstellationView({
         if (dstStyle[i] !== -1.0) {
           dstStyle[i] = -1.0;
           styleDirty = true;
+          trailPos.fill(0, i * 6, i * 6 + 6); // collapse its trail to a degenerate segment
         }
         continue;
       }
 
       const i3 = i * 3;
-      dstPos[i3] = api.get_sat_ecef_x(i) * invR;
-      dstPos[i3 + 1] = api.get_sat_ecef_z(i) * invR;
-      dstPos[i3 + 2] = -api.get_sat_ecef_y(i) * invR;
+      const px = api.get_sat_ecef_x(i) * invR;
+      const py = api.get_sat_ecef_z(i) * invR;
+      const pz = -api.get_sat_ecef_y(i) * invR;
+      dstPos[i3] = px;
+      dstPos[i3 + 1] = py;
+      dstPos[i3 + 2] = pz;
+      const t6 = i * 6;
+      trailPos[t6] = px - trailDir[i3] * TRAIL_LEN; // tail
+      trailPos[t6 + 1] = py - trailDir[i3 + 1] * TRAIL_LEN;
+      trailPos[t6 + 2] = pz - trailDir[i3 + 2] * TRAIL_LEN;
+      trailPos[t6 + 3] = px; // head
+      trailPos[t6 + 4] = py;
+      trailPos[t6 + 5] = pz;
 
       const isVis = obsEnabled && (st & 16) !== 0;
       if (isVis) activeVisCount++;
@@ -598,6 +670,38 @@ export function ConstellationView({
 
     engine.visibleCount = activeVisCount;
     posAttr.needsUpdate = true;
+
+    // Motion trails: estimate each satellite's apparent heading from how far it
+    // moved since the last estimate (every ~2 sim-seconds); after a time jump or
+    // on the first frame there are no trails until the next estimate.
+    const trailState = trailStateRef.current;
+    const dtSim = currentSimMs - trailState.prevSimMs;
+    if (!(Math.abs(dtSim) < 120000)) {
+      trailState.prevSimMs = currentSimMs;
+      prevPos.set(dstPos);
+      trailDir.fill(0);
+    } else if (Math.abs(dtSim) >= TRAIL_DIR_PERIOD_MS) {
+      for (let i3 = 0; i3 < satCount * 3; i3 += 3) {
+        const dx = dstPos[i3] - prevPos[i3];
+        const dy = dstPos[i3 + 1] - prevPos[i3 + 1];
+        const dz = dstPos[i3 + 2] - prevPos[i3 + 2];
+        const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const inv = len > 1e-9 ? 1 / len : 0;
+        trailDir[i3] = dx * inv;
+        trailDir[i3 + 1] = dy * inv;
+        trailDir[i3 + 2] = dz * inv;
+      }
+      prevPos.set(dstPos);
+      trailState.prevSimMs = currentSimMs;
+    }
+    const trailMat = trailMatRef.current;
+    if (trailMat) {
+      // Fade in while time is advancing, fade out when paused (a paused sky has no motion hint)
+      const target = showTrails && isPlaying ? 1 : 0;
+      const u = trailMat.uniforms.uOpacity;
+      u.value += (target - u.value) * Math.min(1, dtClamped * 4);
+    }
+    trailPosAttr.needsUpdate = true;
     if (styleDirty) {
       styleAttr.needsUpdate = true;
     }

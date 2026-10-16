@@ -236,6 +236,7 @@ export function App() {
   const pointsRef = useRef<THREE.Points | null>(null);
   const viewCommandsRef = useRef<ViewCommands | null>(null);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [showTrails, setShowTrails] = useState(true);
   const earthMeshRef = useRef<THREE.Mesh | null>(null);
 
   // Simulation Clock (updated via Direct DOM refs to avoid Preact VDOM re-renders)
@@ -636,6 +637,7 @@ export function App() {
             visualSettings={visualSettings}
             pointsRef={pointsRef}
             viewCommandsRef={viewCommandsRef}
+            showTrails={showTrails}
             earthMeshRef={earthMeshRef}
             onFrameStats={handleFrameStats}
           />
@@ -727,6 +729,14 @@ export function App() {
                     }
                   />
                   雲 (Clouds)
+                </label>
+                <label className="menu-check">
+                  <input
+                    type="checkbox"
+                    checked={showTrails}
+                    onChange={() => setShowTrails((v) => !v)}
+                  />
+                  衛星の航跡 (Trails)
                 </label>
                 <label className="menu-check">
                   <input
