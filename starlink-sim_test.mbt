@@ -78,3 +78,83 @@ test "Starlink TLE propagation, ECEF geodetic conversion, and constellation API"
   let pts = @starlink-sim.compute_orbit_path(0, epoch_ms, 47.5, 60, 0)
   assert_eq(pts, 61)
 }
+
+///|
+test "sincos_rad and sin_rad/cos_rad agree with @math across orbital angles" {
+  let mut x = -100.0
+  while x <= 100.0 {
+    let (s, c) = @starlink-sim.sincos_rad(x)
+    assert_true((s - @math.sin(x)).abs() < 1.0e-14)
+    assert_true((c - @math.cos(x)).abs() < 1.0e-14)
+    assert_true((@starlink-sim.sin_rad(x) - @math.sin(x)).abs() < 1.0e-14)
+    assert_true((@starlink-sim.cos_rad(x) - @math.cos(x)).abs() < 1.0e-13)
+    x = x + 0.137
+  }
+}
+
+///|
+test "time conversions: JD, Unix ms, TLE epoch" {
+  assert_true(
+    (@starlink-sim.calendar_to_jd(2000, 1, 1, 12, 0, 0.0) - 2451545.0).abs() <
+    1.0e-9,
+  )
+  assert_true((@starlink-sim.unix_ms_to_jd(0.0) - 2440587.5).abs() < 1.0e-9)
+  let ms = 1.7e12
+  assert_true(
+    (@starlink-sim.jd_to_unix_ms(@starlink-sim.unix_ms_to_jd(ms)) - ms).abs() <
+    0.1,
+  )
+  // 2-digit year 00 -> 2000, day 179.78495062 == Jun 27 + 0.78495062
+  let jd = @starlink-sim.tle_epoch_to_jd(0, 179.78495062)
+  let expect = @starlink-sim.calendar_to_jd(2000, 6, 27, 0, 0, 0.0) + 0.78495062
+  assert_true((jd - expect).abs() < 1.0e-9)
+  // 2-digit year 58 -> 1958
+  let jd58 = @starlink-sim.tle_epoch_to_jd(58, 1.0)
+  assert_true(
+    (jd58 - @starlink-sim.calendar_to_jd(1958, 1, 1, 0, 0, 0.0)).abs() < 1.0e-9,
+  )
+}
+
+///|
+test "gstime matches Vallado example 3-5 (1992-08-20 12:14 UT1)" {
+  let jd = @starlink-sim.calendar_to_jd(1992, 8, 20, 12, 14, 0.0)
+  let deg = @starlink-sim.gstime(jd) * 180.0 / 3.141592653589793
+  assert_true((deg - 152.578787810).abs() < 1.0e-5)
+}
+
+///|
+test "parse_tle_lines extracts all fields" {
+  let t = @starlink-sim.parse_tle_lines(
+    "1 00005U 58002B   00179.78495062  .00000023  00000-0  28098-4 0  4753", "2 00005  34.2682 348.7242 1859667 331.7664  19.3264 10.82419157413667",
+  )
+  assert_eq(t.satnum, 5)
+  assert_eq(t.epoch_year, 0)
+  assert_true((t.epoch_days - 179.78495062).abs() < 1.0e-9)
+  assert_true((t.bstar - 0.28098e-4).abs() < 1.0e-12)
+  assert_true((t.inclo - 34.2682 * 3.141592653589793 / 180.0).abs() < 1.0e-9)
+  assert_true((t.ecco - 0.1859667).abs() < 1.0e-12)
+  let rpd = t.no_kozai * 1440.0 / (2.0 * 3.141592653589793)
+  assert_true((rpd - 10.82419157).abs() < 1.0e-8)
+}
+
+///|
+test "sun_direction_ecef is a unit vector" {
+  let (x, y, z) = @starlink-sim.sun_direction_ecef(2460000.5)
+  assert_true((x * x + y * y + z * z - 1.0).abs() < 1.0e-12)
+}
+
+///|
+test "Starlink orbit stays bounded over one day of propagation" {
+  let tle = @starlink-sim.parse_tle_lines(
+    "1 44714U 19074B   26289.17018502  .00051451  00000+0  47456-3 0  9996", "2 44714  53.1444 201.1192 0002831 127.3037 232.8238 15.67116217383094",
+  )
+  let sat = @starlink-sim.sgp4_init(tle)
+  let mut t = 0.0
+  while t <= 1440.0 {
+    let (x, y, z, ok) = @starlink-sim.sgp4_propagate_pos(sat, t)
+    assert_true(ok)
+    let r = (x * x + y * y + z * z).sqrt()
+    assert_true(r > 6678.0 && r < 7000.0)
+    t = t + 10.0
+  }
+}
