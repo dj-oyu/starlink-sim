@@ -30,36 +30,6 @@ export interface ThreeContextState {
 
 const ThreeContext = createContext<ThreeContextState | null>(null);
 
-/**
- * Ring buffer of recent slow frames (> 25 ms) for diagnosing hitches on a device: when it
- * happened, how long the frame took, how long after the last touch/mouse input, and the phase
- * within the 3 s UI-list refresh period. Allocation-free; read via `readHitches()`.
- */
-const HITCH_N = 32;
-const hitchBuf = new Float32Array(HITCH_N * 4);
-let hitchTotal = 0;
-let touchStarts = 0; // number of pointerdown gestures on the canvas (to see whether input happened)
-
-export function readHitches(): {
-  total: number;
-  touchStarts: number;
-  recent: { ageSec: number; frameMs: number; sinceInputMs: number | null; phase3s: number }[];
-} {
-  const now = performance.now();
-  const recent = [];
-  const n = Math.min(hitchTotal, HITCH_N);
-  for (let i = hitchTotal - n; i < hitchTotal; i++) {
-    const o = (i % HITCH_N) * 4;
-    recent.push({
-      ageSec: +((now - hitchBuf[o]) / 1000).toFixed(1),
-      frameMs: Math.round(hitchBuf[o + 1]),
-      sinceInputMs: hitchBuf[o + 2] > 5000 ? null : Math.round(hitchBuf[o + 2]),
-      phase3s: Math.round(hitchBuf[o + 3]),
-    });
-  }
-  return { total: hitchTotal, touchStarts, recent };
-}
-
 /** Live handle to the renderer/scene for tools outside the canvas tree (e.g. the GPU bench). */
 export const threeHandleRef: { current: ThreeContextState | null } = { current: null };
 
@@ -174,7 +144,6 @@ export function Canvas({
     };
     setCtxState(state);
     threeHandleRef.current = state;
-    (window as any).__three = state; // diagnostics (console use only)
 
     const handleResize = () => {
       if (!container) return;
@@ -214,17 +183,6 @@ export function Canvas({
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('click', onClick);
 
-    // Remember when the user last interacted (touch / drag / wheel) for the hitch log
-    let lastInputAt = -1e9;
-    const markInput = (e: Event) => {
-      lastInputAt = performance.now();
-      if (e.type === 'pointerdown') touchStarts++;
-    };
-    const inputEvents = ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'touchstart', 'touchmove'];
-    for (const ev of inputEvents) {
-      renderer.domElement.addEventListener(ev, markInput, { passive: true });
-    }
-
     let rafId = 0;
     let lastTime = performance.now();
     let smoothedFps = 60;
@@ -237,14 +195,6 @@ export function Canvas({
       const dtMs = now - lastTime;
       const delta = dtMs / 1000;
       lastTime = now;
-      if (dtMs > 25 && dtMs < 1000) {
-        const o = (hitchTotal % HITCH_N) * 4;
-        hitchBuf[o] = now;
-        hitchBuf[o + 1] = dtMs;
-        hitchBuf[o + 2] = now - lastInputAt;
-        hitchBuf[o + 3] = now % 3000;
-        hitchTotal++;
-      }
 
       if (dtMs > 0 && dtMs < 500) {
         const instFps = 1000 / dtMs;
@@ -287,7 +237,6 @@ export function Canvas({
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('click', onClick);
-      for (const ev of inputEvents) renderer.domElement.removeEventListener(ev, markInput);
       controls.dispose();
       renderer.dispose();
     };

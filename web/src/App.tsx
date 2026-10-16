@@ -347,18 +347,6 @@ export function App() {
   const [customTleText, setCustomTleText] = useState('');
   const [tleStatusMsg, setTleStatusMsg] = useState('');
 
-  // `?noblur=1`: disable the HUD's backdrop-filter blur (A/B test for compositing cost while the
-  // globe is being dragged on a phone)
-  useEffect(() => {
-    try {
-      if (new URLSearchParams(location.search).get('noblur') === '1') {
-        document.documentElement.classList.add('bench-no-blur');
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
   useEffect(() => {
     const sim = new StarlinkSimEngine();
     sim
@@ -371,7 +359,6 @@ export function App() {
         const now = Date.now();
         simTimeMsRef.current = now;
         anchorTimeMsRef.current = now;
-        (window as any).__starlinkEngine = sim; // diagnostics (read-only use from the console)
         setEngine(sim);
       })
       .catch((err) => {
