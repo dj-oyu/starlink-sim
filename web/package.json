@@ -10,6 +10,8 @@
     "predev": "node scripts/fetch-assets.mjs",
     "prebuild": "node scripts/fetch-assets.mjs",
     "dev": "npm run build:wasm && vite",
+    "predev:lan": "node scripts/fetch-assets.mjs",
+    "dev:lan": "npm run build:wasm && vite --host",
     "build": "npm run build:wasm && vite build",
     "preview": "vite preview"
   },
