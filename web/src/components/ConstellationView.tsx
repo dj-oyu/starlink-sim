@@ -11,6 +11,8 @@ import { EarthGlobe, EarthVisualSettings } from './EarthGlobe';
 
 export interface FullPerfSnapshot extends RenderPerfStats {
   wasmPureSgp4Ms: number;
+  wasmSlices: number;
+  wasmFullPassMs: number;
   wasmReadoutMs: number;
   threeBufferSyncMs: number;
   wasmMemoryBytes: number;
@@ -463,6 +465,8 @@ export function ConstellationView({
     textures: 0,
     programs: 0,
     wasmPureSgp4Ms: 0,
+    wasmSlices: 1,
+    wasmFullPassMs: 0,
     wasmReadoutMs: 0,
     threeBufferSyncMs: 0,
     wasmMemoryBytes: 0,
@@ -589,7 +593,7 @@ export function ConstellationView({
     const currentSimMs = simTimeMsRef.current;
 
     // 1. Run MoonBit Wasm SGP4 propagation
-    engine.propagate(currentSimMs);
+    engine.propagate(currentSimMs, timeScale, isPlaying);
     sunDirectionRef.current = engine.sunDirectionThree;
 
     // 2. SWAR 4-sat-at-once status readout + single-pass WebGL buffer sync
@@ -682,10 +686,13 @@ export function ConstellationView({
         const dy = dstPos[i3 + 1] - prevPos[i3 + 1];
         const dz = dstPos[i3 + 2] - prevPos[i3 + 2];
         const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        const inv = len > 1e-9 ? 1 / len : 0;
-        trailDir[i3] = dx * inv;
-        trailDir[i3 + 1] = dy * inv;
-        trailDir[i3 + 2] = dz * inv;
+        if (len > 1e-9) {
+          // (satellites not refreshed this cycle by time-slicing keep their last heading)
+          const inv = 1 / len;
+          trailDir[i3] = dx * inv;
+          trailDir[i3 + 1] = dy * inv;
+          trailDir[i3 + 2] = dz * inv;
+        }
       }
       prevPos.set(dstPos);
       trailState.prevSimMs = currentSimMs;
@@ -877,6 +884,8 @@ export function ConstellationView({
       snap.textures = ps.textures;
       snap.programs = ps.programs;
       snap.wasmPureSgp4Ms = engine.wasmPureSgp4Ms;
+      snap.wasmSlices = engine.wasmSlices;
+      snap.wasmFullPassMs = engine.wasmFullPassMs;
       snap.wasmReadoutMs = engine.wasmReadoutMs;
       snap.threeBufferSyncMs = threeBufferSyncMs;
       snap.wasmMemoryBytes = engine.wasmMemoryBytes;

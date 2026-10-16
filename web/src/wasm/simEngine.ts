@@ -22,6 +22,7 @@ export interface WasmSimExports {
     enabled: number,
   ) => void;
   propagate_constellation: (unix_ms: number) => number;
+  propagate_constellation_slice: (unix_ms: number, slice: number, slice_count: number) => number;
   get_sat_ecef_x: (idx: number) => number;
   get_sat_ecef_y: (idx: number) => number;
   get_sat_ecef_z: (idx: number) => number;
@@ -94,6 +95,20 @@ export interface ObserverConfig {
 }
 
 export const EARTH_RADIUS_KM = 6378.135;
+
+// Adaptive time-slicing of the wasm propagation (see StarlinkSimEngine.propagate)
+const WASM_BUDGET_MS = 4; // target wasm time per frame
+const MAX_SLICES = 8;
+const MAX_STALE_KM = 12; // max position age error (~0.5 px on a 400 px globe)
+const JUMP_MS = 60000; // sim-time step treated as a seek (forces a full pass)
+// `?slices=N` forces N slices per frame (testing / comparing devices); 0 = automatic.
+const FORCED_SLICES = (() => {
+  try {
+    return Math.max(0, Math.min(MAX_SLICES, Number(new URLSearchParams(location.search).get('slices')) || 0));
+  } catch {
+    return 0;
+  }
+})();
 
 export const SHELL_INFO: Record<
   number,
@@ -183,6 +198,17 @@ export class StarlinkSimEngine {
    */
   public satStatus: Uint8Array = new Uint8Array(0);
   public satStatusU32: Uint32Array = new Uint32Array(0);
+  private lastSimMs = NaN;
+  private forceFullPass = true;
+  private sliceCursor = 0;
+  private fullPassMsEma = 0;
+  private emaReady = false;
+  /** Number of slices the last `propagate()` split the constellation into (1 = full pass). */
+  public wasmSlices = 1;
+  /** Smoothed estimate of the cost of one full pass in ms. */
+  get wasmFullPassMs(): number {
+    return this.fullPassMsEma;
+  }
   private renderView: Float32Array = new Float32Array(0);
   private renderPtr = 0;
   private renderFloats = 0;
@@ -354,6 +380,7 @@ export class StarlinkSimEngine {
     }
     // Render-ready positions live in wasm memory; JS bulk-copies them each frame
     // (instead of 3 JS->wasm calls per satellite, which is very slow on Safari/JSC).
+    this.forceFullPass = true; // new satellites: make everything consistent first
     this.renderFloats = this.api.prepare_render_buffer();
     this.renderPtr = this.api.get_render_buffer_ptr();
     this.renderView = new Float32Array(0);
@@ -385,11 +412,52 @@ export class StarlinkSimEngine {
     );
   }
 
-  propagate(unixMs: number): void {
+  /**
+   * Advance the constellation to `unixMs`.
+   *
+   * On slow devices (e.g. iOS Safari runs this wasm ~20x slower than desktop Chrome) a full
+   * pass can exceed the frame budget. When the measured cost of a full pass is above
+   * `WASM_BUDGET_MS`, only 1/k of the satellites are refreshed per frame (k up to
+   * `MAX_SLICES`). A satellite's position can then be up to k-1 frames old; k is capped so
+   * that this staleness stays below `MAX_STALE_KM` at the current playback speed (so fast
+   * playback and time jumps always use a full pass).
+   */
+  propagate(unixMs: number, timeScale = 1, isPlaying = true): void {
     if (!this.api) return;
+    const jumped = !(Math.abs(unixMs - this.lastSimMs) < JUMP_MS);
+    this.lastSimMs = unixMs;
+
+    // Staleness cap from playback speed (LEO ground speed ~7.6 km/s)
+    const speed = isPlaying ? Math.abs(timeScale) : 0;
+    const kmPerFrame = (7.6 * speed) / 60;
+    const kAllowed =
+      kmPerFrame <= 0
+        ? MAX_SLICES
+        : Math.max(1, Math.min(MAX_SLICES, Math.floor(1 + MAX_STALE_KM / kmPerFrame)));
+    const kCost =
+      FORCED_SLICES > 0
+        ? FORCED_SLICES
+        : Math.max(1, Math.min(MAX_SLICES, Math.ceil(this.fullPassMsEma / WASM_BUDGET_MS)));
+    let k = Math.min(kAllowed, kCost);
+    if (jumped || this.forceFullPass) k = 1;
+    this.forceFullPass = false;
+
     const t0 = performance.now();
-    this.api.propagate_constellation(unixMs);
+    if (k === 1) {
+      this.api.propagate_constellation(unixMs);
+      this.sliceCursor = 0;
+    } else {
+      const idx = this.sliceCursor % k;
+      this.api.propagate_constellation_slice(unixMs, idx, k);
+      this.sliceCursor = (idx + 1) % k;
+    }
     const t1 = performance.now();
+
+    // Cost of one *full* pass, estimated from whatever was just measured
+    const est = (t1 - t0) * k;
+    this.fullPassMsEma = this.emaReady ? this.fullPassMsEma * 0.9 + est * 0.1 : est;
+    this.emaReady = true;
+    this.wasmSlices = k;
 
     const api = this.api;
     const sx = api.get_sun_ecef_x();

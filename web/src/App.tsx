@@ -317,6 +317,8 @@ export function App() {
     textures: 0,
     programs: 0,
     wasmPureSgp4Ms: 0,
+    wasmSlices: 1,
+    wasmFullPassMs: 0,
     wasmReadoutMs: 0,
     threeBufferSyncMs: 0,
     wasmMemoryBytes: 0,

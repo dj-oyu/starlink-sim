@@ -100,6 +100,8 @@ pub fn prepare_render_buffer() -> Int
 
 pub fn propagate_constellation(Double) -> Int
 
+pub fn propagate_constellation_slice(Double, Int, Int) -> Int
+
 pub let rad_to_deg : Double
 
 pub fn reset_constellation() -> Unit

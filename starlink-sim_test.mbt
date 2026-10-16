@@ -273,3 +273,59 @@ test "render buffer is sized 3 floats per satellite and exposes a stable pointer
   // propagation must write into the same buffer, not reallocate it
   assert_eq(@starlink-sim.get_render_buffer_ptr(), p0)
 }
+
+///|
+fn load_test_constellation() -> Int32 {
+  @starlink-sim.reset_constellation()
+  let mut m = 0.0
+  while m < 360.0 {
+    let _ = @starlink-sim.add_satellite_elements(
+      44714, 26, 289.17018502, 0.00047456, 53.1444, 201.1192, 0.0002831, 127.3037,
+      m, 15.67116217,
+    )
+    m = m + 17.0
+  }
+  @starlink-sim.get_satellite_count()
+}
+
+///|
+test "sliced propagation over all slices equals one full pass (positions, status, visible list)" {
+  let n = load_test_constellation()
+  let t = @starlink-sim.jd_to_unix_ms(
+      @starlink-sim.tle_epoch_to_jd(26, 289.17018502),
+    ) +
+    3600000.0
+  @starlink-sim.set_observer(35.6762, 139.6503, 0.04, 5.0, 1)
+  let _ = @starlink-sim.propagate_constellation(t)
+  let fx : Array[Double] = []
+  let fy : Array[Double] = []
+  let fs : Array[Int32] = []
+  for i in 0..<n {
+    fx.push(@starlink-sim.get_sat_ecef_x(i))
+    fy.push(@starlink-sim.get_sat_ecef_y(i))
+    fs.push(@starlink-sim.get_sat_status(i))
+  }
+  let full_visible = @starlink-sim.get_visible_count()
+  // Same constellation, fresh state, refreshed in 4 slices at the same instant
+  let _ = load_test_constellation()
+  @starlink-sim.set_observer(35.6762, 139.6503, 0.04, 5.0, 1)
+  for k in 0..<4 {
+    let _ = @starlink-sim.propagate_constellation_slice(t, k, 4)
+  }
+  for i in 0..<n {
+    assert_true((@starlink-sim.get_sat_ecef_x(i) - fx[i]).abs() < 1.0e-9)
+    assert_true((@starlink-sim.get_sat_ecef_y(i) - fy[i]).abs() < 1.0e-9)
+    assert_eq(@starlink-sim.get_sat_status(i), fs[i])
+  }
+  assert_eq(@starlink-sim.get_visible_count(), full_visible)
+  // visible list entries must all have the visible bit set
+  for k in 0..<@starlink-sim.get_visible_count() {
+    assert_eq(
+      @starlink-sim.get_sat_visible(@starlink-sim.get_visible_sat_index(k)),
+      1,
+    )
+  }
+  // invalid slice arguments are rejected without touching state
+  assert_eq(@starlink-sim.propagate_constellation_slice(t, 4, 4), 0)
+  assert_eq(@starlink-sim.propagate_constellation_slice(t, 0, 0), 0)
+}

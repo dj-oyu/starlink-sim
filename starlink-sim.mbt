@@ -133,11 +133,37 @@ pub fn set_observer(
 }
 
 ///|
-/// Propagate all satellites in the constellation to `unix_ms` (UTC milliseconds).
+/// Propagate every satellite to `unix_ms` (UTC milliseconds).
 /// Computes SGP4 TEME state, rotates to ECEF, updates Sun direction, and packs
 /// `(shell_id | (valid << 3) | (visible << 4))` into `sat_status` with zero transcendental calls.
 /// Returns the number of valid propagated satellites.
 pub fn propagate_constellation(unix_ms : Double) -> Int32 {
+  propagate_slice_impl(unix_ms, 0, 1)
+}
+
+///|
+/// Propagate only slice `slice` of `slice_count` equal contiguous slices of the
+/// constellation to `unix_ms`; the other satellites keep their previous state. Lets the
+/// host spread the work over several frames on slow devices. Sun direction, ground-station
+/// geometry and the visible list are refreshed on every call. Returns the number of valid
+/// satellites in the slice.
+pub fn propagate_constellation_slice(
+  unix_ms : Double,
+  slice : Int32,
+  slice_count : Int32,
+) -> Int32 {
+  if slice_count < 1 || slice < 0 || slice >= slice_count {
+    return 0
+  }
+  propagate_slice_impl(unix_ms, slice, slice_count)
+}
+
+///|
+fn propagate_slice_impl(
+  unix_ms : Double,
+  slice : Int32,
+  slice_count : Int32,
+) -> Int32 {
   let jd = unix_ms_to_jd(unix_ms)
   sim_state.last_jd = jd
   let gmst = gstime(jd)
@@ -176,7 +202,9 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let obs_on = sim_state.obs_enabled
 
   let visible_indices = sim_state.visible_indices
-  visible_indices.clear()
+  if slice_count == 1 {
+    visible_indices.clear()
+  }
   // Hoist the per-call invariant array handles out of the loop; all four
   // output arrays are kept at exactly `satellites.length()` entries by
   // `add_satellite_elements` / `reset_constellation`, so unchecked access is safe.
@@ -197,9 +225,10 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let inv_r = 1.0 / earth_radius_km
   let mut valid_count = 0
   let mut vis_count = 0
+  let hi = n * (slice + 1) / slice_count
 
-  let mut i = 0
-  while i < n {
+  let mut i = n * slice / slice_count
+  while i < hi {
     let sat = satellites.unsafe_get(i)
     let shell_bits = sat.shell_id & 7
     let tsince = (jd - sat.jdsatepoch) * minutes_per_day
@@ -234,7 +263,9 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
           let range_sq = dx * dx + dy * dy + dz * dz
           if top_z * top_z >= range_sq * min_sin_el_sq {
             status = status | 16
-            visible_indices.push(i)
+            if slice_count == 1 {
+              visible_indices.push(i)
+            }
             vis_count = vis_count + 1
           }
         }
@@ -244,6 +275,19 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
       sat_status.unsafe_set(i, shell_bits)
     }
     i = i + 1
+  }
+  if slice_count > 1 {
+    // Only part of the constellation was refreshed: rebuild the visible list from the
+    // status bits so it reflects every satellite's latest state.
+    visible_indices.clear()
+    let mut k = 0
+    while k < n {
+      if (sat_status.unsafe_get(k) & 16) != 0 {
+        visible_indices.push(k)
+      }
+      k = k + 1
+    }
+    vis_count = visible_indices.length()
   }
   sim_state.visible_count = vis_count
   valid_count

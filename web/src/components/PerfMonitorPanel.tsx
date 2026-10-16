@@ -123,7 +123,7 @@ export function PerfMonitorPanel({
       if (barGlRef.current) {
         barGlRef.current.style.width = `${Math.min(100, (perf.webglRenderMs / budgetMs) * 100)}%`;
       }
-      if (sgp4MsRef.current) sgp4MsRef.current.textContent = `${perf.wasmPureSgp4Ms.toFixed(2)} ms`;
+      if (sgp4MsRef.current) sgp4MsRef.current.textContent = `${perf.wasmPureSgp4Ms.toFixed(2)} ms${perf.wasmSlices > 1 ? ` (1/${perf.wasmSlices} sats)` : ''}`;
       if (readMsRef.current) readMsRef.current.textContent = `${perf.wasmReadoutMs.toFixed(2)} ms`;
       if (bufMsRef.current) bufMsRef.current.textContent = `${perf.threeBufferSyncMs.toFixed(2)} ms`;
       if (glMsRef.current) glMsRef.current.textContent = `${perf.webglRenderMs.toFixed(2)} ms`;
@@ -194,6 +194,8 @@ export function PerfMonitorPanel({
       cpuWorkBreakdownMs: {
         totalActiveMs: Number(totalCpuWorkMs.toFixed(2)),
         moonbitWasmSgp4PureMs: Number(perf.wasmPureSgp4Ms.toFixed(2)),
+        wasmSlicesPerFrame: perf.wasmSlices,
+        wasmFullPassEstimateMs: Number(perf.wasmFullPassMs.toFixed(2)),
         wasmToJsReadoutMs: Number(perf.wasmReadoutMs.toFixed(2)),
         threeBufferSyncMs: Number(perf.threeBufferSyncMs.toFixed(2)),
         webglSubmitMs: Number(perf.webglRenderMs.toFixed(2)),
