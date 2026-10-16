@@ -1,56 +1,136 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { FullPerfSnapshot } from './ConstellationView';
 
+export type PerfListener = (perf: FullPerfSnapshot) => void;
+
 interface PerfMonitorPanelProps {
-  perf: FullPerfSnapshot;
-  history: FullPerfSnapshot[];
+  latestPerfRef: { current: FullPerfSnapshot };
+  subscribePerf: (cb: PerfListener) => () => void;
   satCount: number;
   onClose: () => void;
 }
 
 export function PerfMonitorPanel({
-  perf,
-  history,
+  latestPerfRef,
+  subscribePerf,
   satCount,
   onClose,
 }: PerfMonitorPanelProps) {
   const [copied, setCopied] = useState(false);
 
-  const totalCpuWorkMs =
-    perf.wasmPureSgp4Ms +
-    perf.wasmReadoutMs +
-    perf.threeBufferSyncMs +
-    perf.webglRenderMs;
-  const budgetMs = 16.667; // 60 FPS target budget
-  const budgetUsagePct = Math.min(100, (totalCpuWorkMs / budgetMs) * 100);
+  const fpsValRef = useRef<HTMLDivElement>(null);
+  const minFpsValRef = useRef<HTMLDivElement>(null);
+  const budgetValRef = useRef<HTMLDivElement>(null);
+  const totalMsSpanRef = useRef<HTMLSpanElement>(null);
+  const barSgp4Ref = useRef<HTMLDivElement>(null);
+  const barReadRef = useRef<HTMLDivElement>(null);
+  const barBufRef = useRef<HTMLDivElement>(null);
+  const barGlRef = useRef<HTMLDivElement>(null);
+  const sgp4MsRef = useRef<HTMLSpanElement>(null);
+  const readMsRef = useRef<HTMLSpanElement>(null);
+  const bufMsRef = useRef<HTMLSpanElement>(null);
+  const glMsRef = useRef<HTMLSpanElement>(null);
+  const polyTotalRef = useRef<SVGPolylineElement>(null);
+  const polyWasmRef = useRef<SVGPolylineElement>(null);
+  const drawCallsRef = useRef<HTMLDivElement>(null);
+  const ptsTrisRef = useRef<HTMLDivElement>(null);
+  const wasmMemRef = useRef<HTMLDivElement>(null);
+  const jsHeapRef = useRef<HTMLDivElement>(null);
 
-  const pctSgp4 = Math.min(100, (perf.wasmPureSgp4Ms / budgetMs) * 100);
-  const pctRead = Math.min(100, (perf.wasmReadoutMs / budgetMs) * 100);
-  const pctBuf = Math.min(100, (perf.threeBufferSyncMs / budgetMs) * 100);
-  const pctGl = Math.min(100, (perf.webglRenderMs / budgetMs) * 100);
-
-  // Build SVG sparkline path (width 280, height 48, max scale 16.67ms)
   const w = 280;
   const h = 48;
   const maxMs = 18.0;
-  const ptsTotal: string[] = [];
-  const ptsWasm: string[] = [];
 
-  for (let i = 0; i < history.length; i++) {
-    const item = history[i];
-    const x = (i / Math.max(history.length - 1, 1)) * w;
-    const tot =
-      item.wasmPureSgp4Ms +
-      item.wasmReadoutMs +
-      item.threeBufferSyncMs +
-      item.webglRenderMs;
-    const yTot = h - Math.min(1, tot / maxMs) * (h - 4) - 2;
-    const yWasm = h - Math.min(1, item.wasmPureSgp4Ms / maxMs) * (h - 4) - 2;
-    ptsTotal.push(`${x.toFixed(1)},${yTot.toFixed(1)}`);
-    ptsWasm.push(`${x.toFixed(1)},${yWasm.toFixed(1)}`);
-  }
+  useEffect(() => {
+    const histTotal = new Float32Array(60);
+    const histWasm = new Float32Array(60);
+    let count = 0;
+
+    const applyPerf = (perf: FullPerfSnapshot) => {
+      const totalCpuWorkMs =
+        perf.wasmPureSgp4Ms +
+        perf.wasmReadoutMs +
+        perf.threeBufferSyncMs +
+        perf.webglRenderMs;
+      const budgetMs = 16.667;
+      const budgetUsagePct = Math.min(100, (totalCpuWorkMs / budgetMs) * 100);
+
+      if (fpsValRef.current) fpsValRef.current.textContent = perf.fps.toFixed(1);
+      if (minFpsValRef.current) minFpsValRef.current.textContent = perf.minFps.toFixed(1);
+      if (budgetValRef.current) {
+        budgetValRef.current.textContent = `${budgetUsagePct.toFixed(0)}%`;
+        budgetValRef.current.style.color = budgetUsagePct < 75 ? '#34d399' : '#fb923c';
+      }
+      if (totalMsSpanRef.current) {
+        totalMsSpanRef.current.textContent = `${totalCpuWorkMs.toFixed(2)} / 16.67 ms`;
+      }
+      if (barSgp4Ref.current) {
+        barSgp4Ref.current.style.width = `${Math.min(100, (perf.wasmPureSgp4Ms / budgetMs) * 100)}%`;
+      }
+      if (barReadRef.current) {
+        barReadRef.current.style.width = `${Math.min(100, (perf.wasmReadoutMs / budgetMs) * 100)}%`;
+      }
+      if (barBufRef.current) {
+        barBufRef.current.style.width = `${Math.min(100, (perf.threeBufferSyncMs / budgetMs) * 100)}%`;
+      }
+      if (barGlRef.current) {
+        barGlRef.current.style.width = `${Math.min(100, (perf.webglRenderMs / budgetMs) * 100)}%`;
+      }
+      if (sgp4MsRef.current) sgp4MsRef.current.textContent = `${perf.wasmPureSgp4Ms.toFixed(2)} ms`;
+      if (readMsRef.current) readMsRef.current.textContent = `${perf.wasmReadoutMs.toFixed(2)} ms`;
+      if (bufMsRef.current) bufMsRef.current.textContent = `${perf.threeBufferSyncMs.toFixed(2)} ms`;
+      if (glMsRef.current) glMsRef.current.textContent = `${perf.webglRenderMs.toFixed(2)} ms`;
+
+      if (count < 60) {
+        histTotal[count] = totalCpuWorkMs;
+        histWasm[count] = perf.wasmPureSgp4Ms;
+        count++;
+      } else {
+        histTotal.copyWithin(0, 1);
+        histWasm.copyWithin(0, 1);
+        histTotal[59] = totalCpuWorkMs;
+        histWasm[59] = perf.wasmPureSgp4Ms;
+      }
+
+      if (count > 1) {
+        let strTot = '';
+        let strWasm = '';
+        const denom = count - 1;
+        for (let i = 0; i < count; i++) {
+          const x = ((i / denom) * w).toFixed(1);
+          const yTot = (h - Math.min(1, histTotal[i] / maxMs) * (h - 4) - 2).toFixed(1);
+          const yWasm = (h - Math.min(1, histWasm[i] / maxMs) * (h - 4) - 2).toFixed(1);
+          strTot += (i === 0 ? '' : ' ') + x + ',' + yTot;
+          strWasm += (i === 0 ? '' : ' ') + x + ',' + yWasm;
+        }
+        if (polyTotalRef.current) polyTotalRef.current.setAttribute('points', strTot);
+        if (polyWasmRef.current) polyWasmRef.current.setAttribute('points', strWasm);
+      }
+
+      if (drawCallsRef.current) drawCallsRef.current.textContent = `${perf.drawCalls} calls`;
+      if (ptsTrisRef.current) {
+        ptsTrisRef.current.textContent = `${perf.points.toLocaleString()} pts · ${(perf.triangles / 1000).toFixed(1)}k tris`;
+      }
+      if (wasmMemRef.current) {
+        wasmMemRef.current.textContent = `${(perf.wasmMemoryBytes / (1024 * 1024)).toFixed(2)} MB`;
+      }
+      if (jsHeapRef.current) {
+        jsHeapRef.current.textContent = `${perf.jsHeapMb ? `${perf.jsHeapMb.toFixed(1)} MB` : 'N/A'} · ${perf.programs} progs`;
+      }
+    };
+
+    applyPerf(latestPerfRef.current);
+    return subscribePerf(applyPerf);
+  }, [subscribePerf, latestPerfRef]);
 
   const handleCopyReport = () => {
+    const perf = latestPerfRef.current;
+    const totalCpuWorkMs =
+      perf.wasmPureSgp4Ms +
+      perf.wasmReadoutMs +
+      perf.threeBufferSyncMs +
+      perf.webglRenderMs;
+    const budgetUsagePct = Math.min(100, (totalCpuWorkMs / 16.667) * 100);
     const report = {
       timestamp: new Date().toISOString(),
       satellitesTracked: satCount,
@@ -123,25 +203,20 @@ export function PerfMonitorPanel({
       >
         <div className="telemetry-box">
           <span className="field-label">AVG FPS</span>
-          <div className="telemetry-val" style={{ color: '#34d399' }}>
-            {perf.fps.toFixed(1)}
+          <div ref={fpsValRef} className="telemetry-val" style={{ color: '#34d399' }}>
+            60.0
           </div>
         </div>
         <div className="telemetry-box">
           <span className="field-label">1% LOW FPS</span>
-          <div className="telemetry-val" style={{ color: '#38bdf8' }}>
-            {perf.minFps.toFixed(1)}
+          <div ref={minFpsValRef} className="telemetry-val" style={{ color: '#38bdf8' }}>
+            60.0
           </div>
         </div>
         <div className="telemetry-box">
           <span className="field-label">60Hz BUDGET</span>
-          <div
-            className="telemetry-val"
-            style={{
-              color: budgetUsagePct < 75 ? '#34d399' : '#fb923c',
-            }}
-          >
-            {budgetUsagePct.toFixed(0)}%
+          <div ref={budgetValRef} className="telemetry-val" style={{ color: '#34d399' }}>
+            25%
           </div>
         </div>
       </div>
@@ -158,8 +233,8 @@ export function PerfMonitorPanel({
           }}
         >
           <span>Frame Active Work Breakdown</span>
-          <span style={{ fontFamily: 'monospace', color: '#f8fafc' }}>
-            {totalCpuWorkMs.toFixed(2)} / 16.67 ms
+          <span ref={totalMsSpanRef} style={{ fontFamily: 'monospace', color: '#f8fafc' }}>
+            0.00 / 16.67 ms
           </span>
         </div>
         <div
@@ -174,19 +249,23 @@ export function PerfMonitorPanel({
           }}
         >
           <div
-            style={{ width: `${pctSgp4}%`, background: '#38bdf8' }}
+            ref={barSgp4Ref}
+            style={{ width: '0%', background: '#38bdf8' }}
             title="MoonBit SGP4 Pure Compute"
           />
           <div
-            style={{ width: `${pctRead}%`, background: '#a78bfa' }}
+            ref={barReadRef}
+            style={{ width: '0%', background: '#a78bfa' }}
             title="Wasm to JS Readout"
           />
           <div
-            style={{ width: `${pctBuf}%`, background: '#10b981' }}
+            ref={barBufRef}
+            style={{ width: '0%', background: '#10b981' }}
             title="Three.js Vertex Buffer Sync"
           />
           <div
-            style={{ width: `${pctGl}%`, background: '#fb923c' }}
+            ref={barGlRef}
+            style={{ width: '0%', background: '#fb923c' }}
             title="WebGL Render Submit"
           />
         </div>
@@ -205,28 +284,28 @@ export function PerfMonitorPanel({
           <span style={{ color: '#38bdf8' }}>
             ● MoonBit Wasm SGP4 ({satCount.toLocaleString()} sats)
           </span>
-          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-            {perf.wasmPureSgp4Ms.toFixed(2)} ms
+          <span ref={sgp4MsRef} style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+            0.00 ms
           </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: '#a78bfa' }}>● Wasm → JS FFI Readout</span>
-          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-            {perf.wasmReadoutMs.toFixed(2)} ms
+          <span ref={readMsRef} style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+            0.00 ms
           </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: '#10b981' }}>
             ● Three.js Float32Buffer Sync
           </span>
-          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-            {perf.threeBufferSyncMs.toFixed(2)} ms
+          <span ref={bufMsRef} style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+            0.00 ms
           </span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: '#fb923c' }}>● WebGL Draw Call Submit</span>
-          <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-            {perf.webglRenderMs.toFixed(2)} ms
+          <span ref={glMsRef} style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+            0.00 ms
           </span>
         </div>
       </div>
@@ -261,22 +340,20 @@ export function PerfMonitorPanel({
             stroke="rgba(248, 113, 113, 0.35)"
             strokeDasharray="3,3"
           />
-          {ptsTotal.length > 1 && (
-            <polyline
-              fill="none"
-              stroke="#34d399"
-              strokeWidth="1.5"
-              points={ptsTotal.join(' ')}
-            />
-          )}
-          {ptsWasm.length > 1 && (
-            <polyline
-              fill="none"
-              stroke="#38bdf8"
-              strokeWidth="1.5"
-              points={ptsWasm.join(' ')}
-            />
-          )}
+          <polyline
+            ref={polyTotalRef}
+            fill="none"
+            stroke="#34d399"
+            strokeWidth="1.5"
+            points=""
+          />
+          <polyline
+            ref={polyWasmRef}
+            fill="none"
+            stroke="#38bdf8"
+            strokeWidth="1.5"
+            points=""
+          />
         </svg>
       </div>
 
@@ -284,26 +361,22 @@ export function PerfMonitorPanel({
       <div className="telemetry-grid">
         <div className="telemetry-box">
           <span className="field-label">DRAW CALLS / FRAME</span>
-          <div className="telemetry-val">{perf.drawCalls} calls</div>
+          <div ref={drawCallsRef} className="telemetry-val">0 calls</div>
         </div>
         <div className="telemetry-box">
           <span className="field-label">GPU POINTS / TRIS</span>
-          <div className="telemetry-val" style={{ fontSize: '11px' }}>
-            {perf.points.toLocaleString()} pts ·{' '}
-            {(perf.triangles / 1000).toFixed(1)}k tris
+          <div ref={ptsTrisRef} className="telemetry-val" style={{ fontSize: '11px' }}>
+            0 pts · 0.0k tris
           </div>
         </div>
         <div className="telemetry-box">
           <span className="field-label">WASM LINEAR MEM</span>
-          <div className="telemetry-val">
-            {(perf.wasmMemoryBytes / (1024 * 1024)).toFixed(2)} MB
-          </div>
+          <div ref={wasmMemRef} className="telemetry-val">0.00 MB</div>
         </div>
         <div className="telemetry-box">
           <span className="field-label">JS HEAP / SHADERS</span>
-          <div className="telemetry-val" style={{ fontSize: '11px' }}>
-            {perf.jsHeapMb ? `${perf.jsHeapMb.toFixed(1)} MB` : 'N/A'} ·{' '}
-            {perf.programs} progs
+          <div ref={jsHeapRef} className="telemetry-val" style={{ fontSize: '11px' }}>
+            N/A · 0 progs
           </div>
         </div>
       </div>

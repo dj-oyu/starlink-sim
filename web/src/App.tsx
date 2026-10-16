@@ -12,7 +12,10 @@ import {
   FullPerfSnapshot,
 } from './components/ConstellationView';
 import { EarthVisualSettings } from './components/EarthGlobe';
-import { PerfMonitorPanel } from './components/PerfMonitorPanel';
+import {
+  PerfMonitorPanel,
+  PerfListener,
+} from './components/PerfMonitorPanel';
 import './styles.css';
 
 interface CityPreset {
@@ -43,7 +46,7 @@ function formatUtcIso(ms: number): string {
 function formatJst(ms: number): string {
   const d = new Date(ms + 9 * 3600 * 1000);
   if (isNaN(d.getTime())) return '----';
-  return d.toISOString().replace('T', ' ').slice(0, 19) + ' JST';
+  return '(' + d.toISOString().replace('T', ' ').slice(0, 19) + ' JST)';
 }
 
 function toDatetimeLocalValue(ms: number): string {
@@ -61,12 +64,20 @@ export function App() {
   const pointsRef = useRef<THREE.Points | null>(null);
   const earthMeshRef = useRef<THREE.Mesh | null>(null);
 
-  // Simulation Clock
+  // Simulation Clock (updated via Direct DOM refs to avoid Preact VDOM re-renders)
   const simTimeMsRef = useRef<number>(Date.now());
-  const [anchorTimeMs, setAnchorTimeMs] = useState<number>(Date.now());
-  const [displayTimeMs, setDisplayTimeMs] = useState<number>(Date.now());
+  const anchorTimeMsRef = useRef<number>(Date.now());
   const [isPlaying, setIsPlaying] = useState(true);
   const [timeScale, setTimeScale] = useState(1);
+
+  // Direct DOM refs for high-frequency HUD readouts
+  const topInRangeRef = useRef<HTMLSpanElement>(null);
+  const topFpsRef = useRef<HTMLSpanElement>(null);
+  const topSgp4MsRef = useRef<HTMLSpanElement>(null);
+  const utcClockRef = useRef<HTMLSpanElement>(null);
+  const jstClockRef = useRef<HTMLSpanElement>(null);
+  const sliderInputRef = useRef<HTMLInputElement>(null);
+  const datetimeInputRef = useRef<HTMLInputElement>(null);
 
   // Earth Visual Settings
   const [visualSettings, setVisualSettings] = useState<EarthVisualSettings>({
@@ -103,10 +114,12 @@ export function App() {
   const [showCommLinks, setShowCommLinks] = useState(true);
   const [pickGroundStationMode, setPickGroundStationMode] = useState(false);
 
-  // Live Frame Telemetry & Performance Profiler
+  // Live Frame Telemetry & Performance Profiler (Direct subscription, zero VNode churn)
   const [visibleCount, setVisibleCount] = useState(0);
+  const [overheadTick, setOverheadTick] = useState(0);
+  const lastOverheadSecRef = useRef(0);
   const [showPerfPanel, setShowPerfPanel] = useState(true);
-  const [perfSnapshot, setPerfSnapshot] = useState<FullPerfSnapshot>({
+  const latestPerfRef = useRef<FullPerfSnapshot>({
     fps: 60,
     minFps: 60,
     frameTimeMs: 16.6,
@@ -124,7 +137,17 @@ export function App() {
     wasmMemoryBytes: 0,
     jsHeapMb: null,
   });
-  const [perfHistory, setPerfHistory] = useState<FullPerfSnapshot[]>([]);
+  const perfListenersRef = useRef<Set<PerfListener>>(new Set());
+  const subscribePerf = useMemo(
+    () => (cb: PerfListener) => {
+      perfListenersRef.current.add(cb);
+      return () => {
+        perfListenersRef.current.delete(cb);
+      };
+    },
+    [],
+  );
+
   const [selectedTelemetry, setSelectedTelemetry] =
     useState<SatelliteTelemetry | null>(null);
 
@@ -140,8 +163,7 @@ export function App() {
       .then(() => {
         const now = Date.now();
         simTimeMsRef.current = now;
-        setAnchorTimeMs(now);
-        setDisplayTimeMs(now);
+        anchorTimeMsRef.current = now;
         setEngine(sim);
       })
       .catch((err) => {
@@ -173,8 +195,7 @@ export function App() {
     return { searchMatchIndices: set, searchResultsList: list };
   }, [engine, searchQuery, satVersion]);
 
-  // Overhead visible satellites list (sorted by highest elevation, throttled to 1 Hz)
-  const overheadSecondTick = Math.floor(displayTimeMs / 1000);
+  // Overhead visible satellites list (sorted by highest elevation, throttled to once every 2 seconds)
   const overheadSatellites = useMemo(() => {
     if (!engine || !observer.enabled) return [];
     const indices = engine.visibleIndices;
@@ -199,9 +220,21 @@ export function App() {
       };
     }
     return items;
-  }, [engine, overheadSecondTick, visibleCount, observer.enabled, enabledShells]);
+  }, [engine, overheadTick, visibleCount, observer.enabled, enabledShells]);
 
-  const perfHistoryRef = useRef<FullPerfSnapshot[]>([]);
+  const syncClockDom = (ms: number) => {
+    if (utcClockRef.current) utcClockRef.current.textContent = formatUtcIso(ms);
+    if (jstClockRef.current) jstClockRef.current.textContent = formatJst(ms);
+    if (sliderInputRef.current) {
+      const offsetMins = (ms - anchorTimeMsRef.current) / 60000;
+      sliderInputRef.current.value = String(
+        Math.max(-1440, Math.min(1440, offsetMins)),
+      );
+    }
+    if (datetimeInputRef.current && document.activeElement !== datetimeInputRef.current) {
+      datetimeInputRef.current.value = toDatetimeLocalValue(ms);
+    }
+  };
 
   const handleFrameStats = (
     simTimeMs: number,
@@ -209,22 +242,43 @@ export function App() {
     perf: FullPerfSnapshot,
     selTelemetry: SatelliteTelemetry | null,
   ) => {
-    setDisplayTimeMs(simTimeMs);
-    setVisibleCount(visCount);
-    setPerfSnapshot(perf);
-    const hist = perfHistoryRef.current;
-    if (hist.length >= 60) {
-      hist.shift();
+    latestPerfRef.current = perf;
+
+    // 1. Direct DOM updates (Zero Preact re-renders / Zero VNode allocations!)
+    syncClockDom(simTimeMs);
+    if (topInRangeRef.current) {
+      topInRangeRef.current.textContent = observer.enabled
+        ? `${visCount} sats`
+        : 'OFF';
     }
-    hist.push(perf);
-    setPerfHistory(hist);
-    setSelectedTelemetry(selTelemetry);
+    if (topFpsRef.current) {
+      topFpsRef.current.textContent = `${perf.fps.toFixed(0)} FPS`;
+    }
+    if (topSgp4MsRef.current) {
+      topSgp4MsRef.current.textContent = `${perf.wasmPureSgp4Ms.toFixed(2)} ms`;
+    }
+    for (const listener of perfListenersRef.current) {
+      listener(perf);
+    }
+
+    // 2. Only trigger Preact state if visible satellite count changed or every 2s for overhead list
+    const secBucket = Math.floor(performance.now() / 2000);
+    if (visCount !== visibleCount) {
+      setVisibleCount(visCount);
+    }
+    if (observer.enabled && secBucket !== lastOverheadSecRef.current) {
+      lastOverheadSecRef.current = secBucket;
+      setOverheadTick(secBucket);
+    }
+    if (selTelemetry !== null || selectedTelemetry !== null) {
+      setSelectedTelemetry(selTelemetry);
+    }
   };
 
   const handleJumpToTime = (newTimeMs: number) => {
     simTimeMsRef.current = newTimeMs;
-    setAnchorTimeMs(newTimeMs);
-    setDisplayTimeMs(newTimeMs);
+    anchorTimeMsRef.current = newTimeMs;
+    syncClockDom(newTimeMs);
   };
 
   const handleSelectGroundStationCoords = (latDeg: number, lonDeg: number) => {
@@ -327,8 +381,6 @@ export function App() {
     );
   }
 
-  const sliderOffsetMinutes = (displayTimeMs - anchorTimeMs) / 60000;
-
   return (
     <div className="sim-layout">
       {/* 3D WebGL Viewport */}
@@ -378,20 +430,20 @@ export function App() {
           </div>
           <div className="metric-item">
             <span className="metric-label">In Range ({observer.name.split(' ')[0]})</span>
-            <span className="metric-value emerald">
+            <span ref={topInRangeRef} className="metric-value emerald">
               {observer.enabled ? `${visibleCount} sats` : 'OFF'}
             </span>
           </div>
           <div className="metric-item">
             <span className="metric-label">FPS / Frame</span>
-            <span className="metric-value emerald">
-              {perfSnapshot.fps.toFixed(0)} FPS
+            <span ref={topFpsRef} className="metric-value emerald">
+              60 FPS
             </span>
           </div>
           <div className="metric-item">
             <span className="metric-label">MoonBit SGP4 Pure</span>
-            <span className="metric-value cyan">
-              {perfSnapshot.wasmPureSgp4Ms.toFixed(2)} ms
+            <span ref={topSgp4MsRef} className="metric-value cyan">
+              3.90 ms
             </span>
           </div>
         </div>
@@ -453,8 +505,8 @@ export function App() {
       {/* PERFORMANCE PROFILER PANEL */}
       {showPerfPanel && (
         <PerfMonitorPanel
-          perf={perfSnapshot}
-          history={perfHistory}
+          latestPerfRef={latestPerfRef}
+          subscribePerf={subscribePerf}
           satCount={engine.count}
           onClose={() => setShowPerfPanel(false)}
         />
@@ -842,9 +894,9 @@ export function App() {
           </div>
 
           <div className="time-readout">
-            <span>{formatUtcIso(displayTimeMs)}</span>
-            <span style={{ fontSize: '12px', color: '#38bdf8' }}>
-              ({formatJst(displayTimeMs)})
+            <span ref={utcClockRef}>{formatUtcIso(simTimeMsRef.current)}</span>
+            <span ref={jstClockRef} style={{ fontSize: '12px', color: '#38bdf8' }}>
+              {formatJst(simTimeMsRef.current)}
             </span>
           </div>
 
@@ -869,19 +921,20 @@ export function App() {
             -24 Hours
           </span>
           <input
+            ref={sliderInputRef}
             type="range"
             min="-1440"
             max="1440"
             step="0.5"
             className="timeline-slider"
-            value={Math.max(-1440, Math.min(1440, sliderOffsetMinutes))}
+            defaultValue="0"
             onInput={(e) => {
               const offsetMins = parseFloat(
                 (e.target as HTMLInputElement).value,
               );
-              const nextMs = anchorTimeMs + offsetMins * 60000;
+              const nextMs = anchorTimeMsRef.current + offsetMins * 60000;
               simTimeMsRef.current = nextMs;
-              setDisplayTimeMs(nextMs);
+              syncClockDom(nextMs);
             }}
           />
           <span
@@ -896,10 +949,11 @@ export function App() {
           </span>
 
           <input
+            ref={datetimeInputRef}
             type="datetime-local"
             className="input-text"
             style={{ width: '175px', fontSize: '11px', padding: '4px 7px' }}
-            value={toDatetimeLocalValue(displayTimeMs)}
+            defaultValue={toDatetimeLocalValue(simTimeMsRef.current)}
             onChange={(e) => {
               const val = (e.target as HTMLInputElement).value;
               if (!val) return;
@@ -927,7 +981,7 @@ export function App() {
             </div>
             <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.5 }}>
               現在ローカルアセット (<code>/assets/data/starlink.tle</code>) から{' '}
-              <strong>{engine.metadata.length.toLocaleString()} 機</strong>{' '}
+              <strong>{engine.count.toLocaleString()} 機</strong>{' '}
               のStarlink軌道データを読み込み済みです。外部通信なしで過去・未来の任意の時刻をSGP4計算できます。
             </p>
             <div style={{ display: 'flex', gap: '8px' }}>

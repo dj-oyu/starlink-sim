@@ -319,6 +319,24 @@ export function ConstellationView({
   ]);
 
   const lastUiReportRef = useRef(0);
+  const perfOutRef = useRef<FullPerfSnapshot>({
+    fps: 60,
+    minFps: 60,
+    frameTimeMs: 16.6,
+    webglRenderMs: 0,
+    drawCalls: 0,
+    triangles: 0,
+    points: 0,
+    lines: 0,
+    geometries: 0,
+    textures: 0,
+    programs: 0,
+    wasmPureSgp4Ms: 0,
+    wasmReadoutMs: 0,
+    threeBufferSyncMs: 0,
+    wasmMemoryBytes: 0,
+    jsHeapMb: null,
+  });
   const lastOrbitCalcRef = useRef<{
     idx: number | null;
     timeMs: number;
@@ -599,7 +617,7 @@ export function ConstellationView({
       }
     }
 
-    // 5. Throttle UI telemetry state updates to 4 Hz (250ms) to minimize Preact VDOM allocations
+    // 5. Throttle UI telemetry updates to 4 Hz (250ms) and reuse persistent perfSnapshot object
     const nowPerf = performance.now();
     if (nowPerf - lastUiReportRef.current > 250) {
       lastUiReportRef.current = nowPerf;
@@ -612,19 +630,26 @@ export function ConstellationView({
         ? perfMem.usedJSHeapSize / (1024 * 1024)
         : null;
 
-      onFrameStats(
-        currentSimMs,
-        engine.visibleIndices.length,
-        {
-          ...threeState.perfStats,
-          wasmPureSgp4Ms: engine.wasmPureSgp4Ms,
-          wasmReadoutMs: engine.wasmReadoutMs,
-          threeBufferSyncMs,
-          wasmMemoryBytes: engine.wasmMemoryBytes,
-          jsHeapMb,
-        },
-        telemetry,
-      );
+      const ps = threeState.perfStats;
+      const snap = perfOutRef.current;
+      snap.fps = ps.fps;
+      snap.minFps = ps.minFps;
+      snap.frameTimeMs = ps.frameTimeMs;
+      snap.webglRenderMs = ps.webglRenderMs;
+      snap.drawCalls = ps.drawCalls;
+      snap.triangles = ps.triangles;
+      snap.points = ps.points;
+      snap.lines = ps.lines;
+      snap.geometries = ps.geometries;
+      snap.textures = ps.textures;
+      snap.programs = ps.programs;
+      snap.wasmPureSgp4Ms = engine.wasmPureSgp4Ms;
+      snap.wasmReadoutMs = engine.wasmReadoutMs;
+      snap.threeBufferSyncMs = threeBufferSyncMs;
+      snap.wasmMemoryBytes = engine.wasmMemoryBytes;
+      snap.jsHeapMb = jsHeapMb;
+
+      onFrameStats(currentSimMs, engine.visibleIndices.length, snap, telemetry);
     }
   });
 
