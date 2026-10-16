@@ -196,44 +196,6 @@ const ATMOS_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-function parseGeoJsonToLinePositions(geojson: any, radius = 1.0018): Float32Array {
-  const segments: number[] = [];
-
-  function addRing(coords: number[][]) {
-    for (let i = 0; i + 1 < coords.length; i++) {
-      const [lon1, lat1] = coords[i];
-      const [lon2, lat2] = coords[i + 1];
-      const [x1, y1, z1] = latLonAltToThree(lat1, lon1, (radius - 1.0) * 6378.135);
-      const [x2, y2, z2] = latLonAltToThree(lat2, lon2, (radius - 1.0) * 6378.135);
-      segments.push(x1, y1, z1, x2, y2, z2);
-    }
-  }
-
-  function processGeometry(geom: any) {
-    if (!geom) return;
-    if (geom.type === 'LineString') {
-      addRing(geom.coordinates);
-    } else if (geom.type === 'MultiLineString' || geom.type === 'Polygon') {
-      for (const ring of geom.coordinates) {
-        addRing(ring);
-      }
-    } else if (geom.type === 'MultiPolygon') {
-      for (const poly of geom.coordinates) {
-        for (const ring of poly) {
-          addRing(ring);
-        }
-      }
-    }
-  }
-
-  if (geojson?.features) {
-    for (const f of geojson.features) {
-      processGeometry(f.geometry);
-    }
-  }
-  return new Float32Array(segments);
-}
-
 export function EarthGlobe({
   sunDirectionRef,
   visualSettings,
@@ -361,7 +323,7 @@ export function EarthGlobe({
     atmosMeshRef.current = atmosMesh;
     atmosMatRef.current = atmosMat;
 
-    // 6. Coastlines & Country Borders Vector Overlay
+    // 6. Coastlines & Country Borders Vector Overlay (Zero-allocation binary Float32Array)
     const vectorGroup = new THREE.Group();
     const coastGeom = new THREE.BufferGeometry();
     const coastMat = new THREE.LineBasicMaterial({
@@ -388,17 +350,21 @@ export function EarthGlobe({
 
     let active = true;
     Promise.all([
-      fetch('/assets/data/ne_110m_coastline.geojson').then((r) => r.json()),
-      fetch('/assets/data/ne_110m_borders.geojson').then((r) => r.json()),
+      fetch('/assets/data/ne_110m_coastline.bin').then((r) => r.arrayBuffer()),
+      fetch('/assets/data/ne_110m_borders.bin').then((r) => r.arrayBuffer()),
     ])
-      .then(([coastJson, borderJson]) => {
+      .then(([coastBuf, borderBuf]) => {
         if (!active) return;
-        const coastPos = parseGeoJsonToLinePositions(coastJson, 1.0018);
-        const borderPos = parseGeoJsonToLinePositions(borderJson, 1.0018);
-        coastGeom.setAttribute('position', new THREE.BufferAttribute(coastPos, 3));
-        borderGeom.setAttribute('position', new THREE.BufferAttribute(borderPos, 3));
+        coastGeom.setAttribute(
+          'position',
+          new THREE.BufferAttribute(new Float32Array(coastBuf), 3),
+        );
+        borderGeom.setAttribute(
+          'position',
+          new THREE.BufferAttribute(new Float32Array(borderBuf), 3),
+        );
       })
-      .catch((err) => console.error('Failed to load local GeoJSON:', err));
+      .catch((err) => console.error('Failed to load local vector binaries:', err));
 
     // 7. Graticule Lat/Lon Grid
     const pts: number[] = [];

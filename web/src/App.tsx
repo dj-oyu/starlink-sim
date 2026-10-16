@@ -150,22 +150,24 @@ export function App() {
       });
   }, []);
 
-  // Search filtering
+  // Search filtering (queries Wasm & typed arrays directly without JS object array)
   const { searchMatchIndices, searchResultsList } = useMemo(() => {
     if (!engine) return { searchMatchIndices: null, searchResultsList: [] };
     const q = searchQuery.trim().toUpperCase();
     if (!q) return { searchMatchIndices: null, searchResultsList: [] };
     const set = new Set<number>();
     const list = [];
-    for (let i = 0; i < engine.metadata.length; i++) {
-      const m = engine.metadata[i];
-      if (
-        m.name.toUpperCase().includes(q) ||
-        String(m.satnum).includes(q) ||
-        m.intlDesig.toUpperCase().includes(q)
-      ) {
+    const numericPart = q.replace(/^STARLINK-?/, '');
+    for (let i = 0; i < engine.count; i++) {
+      const slId = engine.starlinkIds[i];
+      const satnum = engine.api.get_sat_satnum(i);
+      const matchSl = slId > 0 && String(slId).includes(numericPart);
+      const matchNorad = String(satnum).includes(q);
+      if (matchSl || matchNorad) {
         set.add(i);
-        if (list.length < 40) list.push(m);
+        if (list.length < 40) {
+          list.push(engine.getSatMeta(i));
+        }
       }
     }
     return { searchMatchIndices: set, searchResultsList: list };
@@ -178,11 +180,17 @@ export function App() {
     const items = [];
     for (let i = 0; i < indices.length; i++) {
       const idx = indices[i];
-      const meta = engine.metadata[idx];
-      if (!meta || !(enabledShells[meta.shellId] ?? true)) continue;
+      const shId = engine.shellIds[idx];
+      if (!(enabledShells[shId] ?? true)) continue;
       const el = engine.api.get_sat_elevation_deg(idx);
       const range = engine.api.get_sat_range_km(idx);
-      items.push({ index: idx, name: meta.name, satnum: meta.satnum, el, range });
+      items.push({
+        index: idx,
+        name: engine.getSatName(idx),
+        satnum: engine.api.get_sat_satnum(idx),
+        el,
+        range,
+      });
     }
     items.sort((a, b) => b.el - a.el);
     return items.slice(0, 30);
@@ -243,11 +251,11 @@ export function App() {
       for (const hit of satHits) {
         if (hit.distance < earthDist && typeof hit.index === 'number') {
           const idx = hit.index;
-          const meta = engine.metadata[idx];
           if (
-            meta &&
+            idx >= 0 &&
+            idx < engine.count &&
             engine.validFlags[idx] &&
-            (enabledShells[meta.shellId] ?? true) &&
+            (enabledShells[engine.shellIds[idx]] ?? true) &&
             (!searchMatchIndices || searchMatchIndices.has(idx))
           ) {
             setSelectedSatIndex(idx);
@@ -357,7 +365,7 @@ export function App() {
           <div className="metric-item">
             <span className="metric-label">Tracked Satellites</span>
             <span className="metric-value cyan">
-              {engine.metadata.length.toLocaleString()}
+              {engine.count.toLocaleString()}
             </span>
           </div>
           <div className="metric-item">
@@ -439,7 +447,7 @@ export function App() {
         <PerfMonitorPanel
           perf={perfSnapshot}
           history={perfHistory}
-          satCount={engine.metadata.length}
+          satCount={engine.count}
           onClose={() => setShowPerfPanel(false)}
         />
       )}

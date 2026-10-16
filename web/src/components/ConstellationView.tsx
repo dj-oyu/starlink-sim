@@ -5,6 +5,7 @@ import {
   StarlinkSimEngine,
   ObserverConfig,
   SHELL_INFO,
+  EARTH_RADIUS_KM,
   latLonAltToThree,
   SatelliteTelemetry,
 } from '../wasm/simEngine';
@@ -97,7 +98,7 @@ export function ConstellationView({
   const obsPinMeshRef = useRef<THREE.Mesh | null>(null);
   const obsRingGeomRef = useRef<THREE.BufferGeometry | null>(null);
 
-  const satCount = engine.metadata.length;
+  const satCount = engine.count;
 
   const {
     posAttr,
@@ -350,11 +351,14 @@ export function ConstellationView({
     engine.propagate(currentSimMs);
     sunDirectionRef.current = engine.sunDirectionThree;
 
-    // 2. Update satellite Points attributes
+    // 2. Single-pass Wasm readout directly into Three.js WebGL attributes (no intermediate JS buffer)
     const b0 = performance.now();
-    const srcPos = engine.positionsThree;
+    const api = engine.api;
+    const invR = 1.0 / EARTH_RADIUS_KM;
     const valid = engine.validFlags;
     const vis = engine.visibleFlags;
+    const visList = engine.visibleIndices;
+    visList.length = 0;
     const shellIds = engine.shellIds;
     const dstPos = posAttr.array as Float32Array;
     const dstCol = colAttr.array as Float32Array;
@@ -369,6 +373,8 @@ export function ConstellationView({
     let styleDirty = false;
 
     for (let i = 0; i < satCount; i++) {
+      const ok = api.get_sat_valid(i);
+      valid[i] = ok;
       const shId = shellIds[i];
       const shellEnabled =
         shId === 0
@@ -383,7 +389,8 @@ export function ConstellationView({
       const matchesSearch = !hasSearch || searchMatchIndices.has(i);
       const i3 = i * 3;
 
-      if (!valid[i] || !shellEnabled || !matchesSearch) {
+      if (!ok || !shellEnabled || !matchesSearch) {
+        vis[i] = 0;
         dstPos[i3] = 0;
         dstPos[i3 + 1] = 0;
         dstPos[i3 + 2] = 0;
@@ -395,14 +402,23 @@ export function ConstellationView({
         continue;
       }
 
-      dstPos[i3] = srcPos[i3];
-      dstPos[i3 + 1] = srcPos[i3 + 1];
-      dstPos[i3 + 2] = srcPos[i3 + 2];
+      const ex = api.get_sat_ecef_x(i);
+      const ey = api.get_sat_ecef_y(i);
+      const ez = api.get_sat_ecef_z(i);
+      dstPos[i3] = ex * invR;
+      dstPos[i3 + 1] = ez * invR;
+      dstPos[i3 + 2] = -ey * invR;
+
+      const isVis = obsEnabled ? api.get_sat_visible(i) : 0;
+      vis[i] = isVis;
+      if (isVis) {
+        visList.push(i);
+      }
 
       let code: number;
       if (i === selectedSatIndex) {
         code = 3;
-      } else if (obsEnabled && vis[i]) {
+      } else if (isVis) {
         code = 2;
       } else {
         code = hasSearch ? 4 : 1;
@@ -451,31 +467,18 @@ export function ConstellationView({
 
     if (commLinesGeomRef.current) {
       if (obsEnabled && showCommLinks) {
-        const visIndices = engine.visibleIndices;
-        const linkCount = Math.min(visIndices.length, 600);
+        const linkCount = Math.min(visList.length, 600);
         const [ox, oy, oz] = obsThreePos;
         let ptr = 0;
         for (let k = 0; k < linkCount; k++) {
-          const sIdx = visIndices[k];
-          const shId = shellIds[sIdx];
-          const shellEnabled =
-            shId === 0
-              ? s0
-              : shId === 1
-                ? s1
-                : shId === 2
-                  ? s2
-                  : shId === 3
-                    ? s3
-                    : s4;
-          if (!shellEnabled) continue;
+          const sIdx = visList[k];
           const idx3 = sIdx * 3;
           commLinePositions[ptr++] = ox;
           commLinePositions[ptr++] = oy;
           commLinePositions[ptr++] = oz;
-          commLinePositions[ptr++] = srcPos[idx3];
-          commLinePositions[ptr++] = srcPos[idx3 + 1];
-          commLinePositions[ptr++] = srcPos[idx3 + 2];
+          commLinePositions[ptr++] = dstPos[idx3];
+          commLinePositions[ptr++] = dstPos[idx3 + 1];
+          commLinePositions[ptr++] = dstPos[idx3 + 2];
         }
         commLineAttr.needsUpdate = true;
         commLinesGeomRef.current.setDrawRange(0, ptr / 3);
@@ -485,13 +488,14 @@ export function ConstellationView({
     }
     const b1 = performance.now();
     const threeBufferSyncMs = b1 - b0;
+    engine.wasmReadoutMs = 0;
 
     // 4. Update Selected Satellite Marker, Orbit Path & Camera Follow
     if (selectedSatIndex !== null && valid[selectedSatIndex]) {
       const s3 = selectedSatIndex * 3;
-      const sx = srcPos[s3];
-      const sy = srcPos[s3 + 1];
-      const sz = srcPos[s3 + 2];
+      const sx = dstPos[s3];
+      const sy = dstPos[s3 + 1];
+      const sz = dstPos[s3 + 2];
 
       if (selectedMarkerRef.current) {
         selectedMarkerRef.current.position.set(sx, sy, sz);

@@ -168,8 +168,8 @@ export function latLonAltToThree(
 
 export class StarlinkSimEngine {
   public api!: WasmSimExports;
-  public metadata: SatelliteMeta[] = [];
-  public positionsThree: Float32Array = new Float32Array(0);
+  public count = 0;
+  public starlinkIds: Int32Array = new Int32Array(0);
   public validFlags: Uint8Array = new Uint8Array(0);
   public visibleFlags: Uint8Array = new Uint8Array(0);
   public shellIds: Uint8Array = new Uint8Array(0);
@@ -195,107 +195,144 @@ export class StarlinkSimEngine {
     this.loadTleDataset(tleText);
   }
 
+  getSatName(idx: number): string {
+    const slId = this.starlinkIds[idx];
+    if (slId > 0) return `STARLINK-${slId}`;
+    return `SAT-${this.api.get_sat_satnum(idx)}`;
+  }
+
+  getSatMeta(idx: number): SatelliteMeta {
+    return {
+      index: idx,
+      name: this.getSatName(idx),
+      satnum: this.api.get_sat_satnum(idx),
+      intlDesig: '',
+      shellId: this.shellIds[idx],
+      inclinationDeg: this.api.get_sat_inclination_deg(idx),
+    };
+  }
+
+  /**
+   * Zero-allocation single-pass TLE scanner that pushes numeric orbital elements
+   * directly into MoonBit Wasm linear memory without creating intermediate String[] or Object[].
+   */
   loadTleDataset(tleText: string): number {
     if (!this.api) return 0;
     this.api.reset_constellation();
-    this.metadata = [];
     this.shellCounts = [0, 0, 0, 0, 0];
 
-    const lines = tleText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-
+    const tempStarlinkIds: number[] = [];
     let epochSum = 0;
     let epochCount = 0;
 
-    for (let i = 0; i < lines.length; ) {
-      // Support both 3-line (Name + Line1 + Line2) and 2-line TLE formats
-      let name = '';
-      let l1 = '';
-      let l2 = '';
+    const len = tleText.length;
+    let pos = 0;
+    let prevLineStart = -1;
+    let prevLineEnd = -1;
+    let l1Start = -1;
+    let l1End = -1;
 
-      if (
-        lines[i].startsWith('1 ') &&
-        i + 1 < lines.length &&
-        lines[i + 1].startsWith('2 ')
-      ) {
-        l1 = lines[i];
-        l2 = lines[i + 1];
-        name = `STARLINK-${l1.slice(2, 7).trim()}`;
-        i += 2;
-      } else if (
-        i + 2 < lines.length &&
-        lines[i + 1].startsWith('1 ') &&
-        lines[i + 2].startsWith('2 ')
-      ) {
-        name = lines[i];
-        l1 = lines[i + 1];
-        l2 = lines[i + 2];
-        i += 3;
+    const nextLine = (): [number, number] | null => {
+      while (pos < len) {
+        let lineStart = pos;
+        let nl = tleText.indexOf('\n', pos);
+        if (nl === -1) nl = len;
+        pos = nl + 1;
+        let lineEnd = nl;
+        while (lineStart < lineEnd && tleText.charCodeAt(lineStart) <= 32) {
+          lineStart++;
+        }
+        while (lineEnd > lineStart && tleText.charCodeAt(lineEnd - 1) <= 32) {
+          lineEnd--;
+        }
+        if (lineEnd > lineStart) {
+          return [lineStart, lineEnd];
+        }
+      }
+      return null;
+    };
+
+    while (true) {
+      const span = nextLine();
+      if (!span) break;
+      const [s, e] = span;
+      const c0 = tleText.charCodeAt(s);
+      const c1 = s + 1 < e ? tleText.charCodeAt(s + 1) : 0;
+
+      if (c0 === 49 && c1 === 32 && e - s >= 61) {
+        // Line 1 ('1 ')
+        l1Start = s;
+        l1End = e;
+      } else if (c0 === 50 && c1 === 32 && e - s >= 63 && l1Start !== -1) {
+        // Line 2 ('2 ') paired with preceding Line 1
+        const l1 = tleText.slice(l1Start, l1End);
+        const l2 = tleText.slice(s, e);
+
+        const satnum = parseInt(l1.slice(2, 7), 10);
+        const epochYr = parseInt(l1.slice(18, 20), 10);
+        const epochDays = parseFloat(l1.slice(20, 32));
+        const bstar = parseTleExp(l1.slice(53, 61));
+
+        const inclo = parseFloat(l2.slice(8, 16));
+        const nodeo = parseFloat(l2.slice(17, 25));
+        const ecco = parseInt(l2.slice(26, 33), 10) * 1e-7;
+        const argpo = parseFloat(l2.slice(34, 42));
+        const mo = parseFloat(l2.slice(43, 51));
+        const no = parseFloat(l2.slice(52, 63));
+
+        if (!isNaN(satnum) && !isNaN(epochDays) && !isNaN(no) && no > 0) {
+          const idx = this.api.add_satellite_elements(
+            satnum,
+            epochYr,
+            epochDays,
+            bstar,
+            inclo,
+            nodeo,
+            ecco,
+            argpo,
+            mo,
+            no,
+          );
+          const shellId = this.api.get_sat_shell(idx);
+          if (shellId >= 0 && shellId < 5) {
+            this.shellCounts[shellId]++;
+          }
+
+          // Extract numeric suffix if name is "STARLINK-XXXX"
+          let slId = 0;
+          if (prevLineStart !== -1 && prevLineEnd - prevLineStart > 9) {
+            const nameSlice = tleText.slice(prevLineStart, prevLineEnd);
+            const dashIdx = nameSlice.indexOf('-');
+            if (dashIdx !== -1) {
+              const parsed = parseInt(nameSlice.slice(dashIdx + 1), 10);
+              if (!isNaN(parsed)) slId = parsed;
+            }
+          }
+          tempStarlinkIds.push(slId);
+
+          const fullYear = epochYr < 57 ? 2000 + epochYr : 1900 + epochYr;
+          const jan1Ms = Date.UTC(fullYear, 0, 1, 0, 0, 0);
+          epochSum += jan1Ms + (epochDays - 1) * 86400000;
+          epochCount++;
+        }
+        l1Start = -1;
+        prevLineStart = -1;
       } else {
-        i += 1;
-        continue;
+        // Title/Name line (Line 0)
+        prevLineStart = s;
+        prevLineEnd = e;
+        l1Start = -1;
       }
-
-      const satnum = parseInt(l1.slice(2, 7), 10);
-      const intlDesig = l1.slice(9, 17).trim();
-      const epochYr = parseInt(l1.slice(18, 20), 10);
-      const epochDays = parseFloat(l1.slice(20, 32));
-      const bstar = parseTleExp(l1.slice(53, 61));
-
-      const inclo = parseFloat(l2.slice(8, 16));
-      const nodeo = parseFloat(l2.slice(17, 25));
-      const ecco = parseInt(l2.slice(26, 33), 10) * 1e-7;
-      const argpo = parseFloat(l2.slice(34, 42));
-      const mo = parseFloat(l2.slice(43, 51));
-      const no = parseFloat(l2.slice(52, 63));
-
-      if (isNaN(satnum) || isNaN(epochDays) || isNaN(no) || no <= 0) {
-        continue;
-      }
-
-      const idx = this.api.add_satellite_elements(
-        satnum,
-        epochYr,
-        epochDays,
-        bstar,
-        inclo,
-        nodeo,
-        ecco,
-        argpo,
-        mo,
-        no,
-      );
-
-      const shellId = this.api.get_sat_shell(idx);
-      if (shellId >= 0 && shellId < 5) {
-        this.shellCounts[shellId]++;
-      }
-
-      this.metadata.push({
-        index: idx,
-        name,
-        satnum,
-        intlDesig,
-        shellId,
-        inclinationDeg: inclo,
-      });
-
-      const fullYear = epochYr < 57 ? 2000 + epochYr : 1900 + epochYr;
-      const jan1Ms = Date.UTC(fullYear, 0, 1, 0, 0, 0);
-      const satEpochMs = jan1Ms + (epochDays - 1) * 86400000;
-      epochSum += satEpochMs;
-      epochCount++;
     }
 
-    const total = this.metadata.length;
-    this.positionsThree = new Float32Array(total * 3);
+    const total = this.api.get_satellite_count();
+    this.count = total;
+    this.starlinkIds = new Int32Array(tempStarlinkIds);
     this.validFlags = new Uint8Array(total);
     this.visibleFlags = new Uint8Array(total);
     this.shellIds = new Uint8Array(total);
     for (let i = 0; i < total; i++) {
-      this.shellIds[i] = this.metadata[i].shellId;
+      this.shellIds[i] = this.api.get_sat_shell(i);
     }
     if (epochCount > 0) {
       this.defaultEpochUnixMs = epochSum / epochCount;
@@ -321,65 +358,33 @@ export class StarlinkSimEngine {
     this.api.propagate_constellation(unixMs);
     const t1 = performance.now();
 
-    const sx = this.api.get_sun_ecef_x();
-    const sy = this.api.get_sun_ecef_y();
-    const sz = this.api.get_sun_ecef_z();
+    const api = this.api;
+    const sx = api.get_sun_ecef_x();
+    const sy = api.get_sun_ecef_y();
+    const sz = api.get_sun_ecef_z();
     this.sunDirectionThree = [sx, sz, -sy];
 
-    const api = this.api;
-    const count = this.metadata.length;
-    const invR = 1.0 / EARTH_RADIUS_KM;
-    const pos = this.positionsThree;
-    const valid = this.validFlags;
-    const vis = this.visibleFlags;
-    const visList = this.visibleIndices;
-    visList.length = 0;
-
-    for (let i = 0; i < count; i++) {
-      const ok = api.get_sat_valid(i);
-      valid[i] = ok;
-      const i3 = i * 3;
-      if (ok) {
-        const ex = api.get_sat_ecef_x(i);
-        const ey = api.get_sat_ecef_y(i);
-        const ez = api.get_sat_ecef_z(i);
-        pos[i3] = ex * invR;
-        pos[i3 + 1] = ez * invR;
-        pos[i3 + 2] = -ey * invR;
-
-        const isVis = api.get_sat_visible(i);
-        vis[i] = isVis;
-        if (isVis) {
-          visList.push(i);
-        }
-      } else {
-        pos[i3] = 0;
-        pos[i3 + 1] = 0;
-        pos[i3 + 2] = 0;
-        vis[i] = 0;
-      }
-    }
-
-    const t2 = performance.now();
     this.wasmPureSgp4Ms = t1 - t0;
-    this.wasmReadoutMs = t2 - t1;
-    this.lastPropagateMs = t2 - t0;
+    this.lastPropagateMs = t1 - t0;
     this.wasmMemoryBytes = api.memory?.buffer?.byteLength ?? 0;
   }
 
   getSatelliteTelemetry(idx: number): SatelliteTelemetry | null {
-    if (!this.api || idx < 0 || idx >= this.metadata.length) return null;
-    const meta = this.metadata[idx];
-    const shell = SHELL_INFO[meta.shellId] ?? SHELL_INFO[0];
-    const i3 = idx * 3;
+    if (!this.api || idx < 0 || idx >= this.count) return null;
+    const shellId = this.shellIds[idx];
+    const shell = SHELL_INFO[shellId] ?? SHELL_INFO[0];
+    const invR = 1.0 / EARTH_RADIUS_KM;
+    const ex = this.api.get_sat_ecef_x(idx);
+    const ey = this.api.get_sat_ecef_y(idx);
+    const ez = this.api.get_sat_ecef_z(idx);
     return {
       index: idx,
-      name: meta.name,
-      satnum: meta.satnum,
-      intlDesig: meta.intlDesig,
-      shellId: meta.shellId,
+      name: this.getSatName(idx),
+      satnum: this.api.get_sat_satnum(idx),
+      intlDesig: '',
+      shellId,
       shellLabel: shell.label,
-      inclinationDeg: meta.inclinationDeg,
+      inclinationDeg: this.api.get_sat_inclination_deg(idx),
       latDeg: this.api.get_sat_lat_deg(idx),
       lonDeg: this.api.get_sat_lon_deg(idx),
       altKm: this.api.get_sat_alt_km(idx),
@@ -388,11 +393,7 @@ export class StarlinkSimEngine {
       elevationDeg: this.api.get_sat_elevation_deg(idx),
       azimuthDeg: this.api.get_sat_azimuth_deg(idx),
       rangeKm: this.api.get_sat_range_km(idx),
-      threePos: [
-        this.positionsThree[i3],
-        this.positionsThree[i3 + 1],
-        this.positionsThree[i3 + 2],
-      ],
+      threePos: [ex * invR, ez * invR, -ey * invR],
     };
   }
 
@@ -403,7 +404,7 @@ export class StarlinkSimEngine {
     steps = 120,
     groundTrack = false,
   ): [number, number, number][] {
-    if (!this.api || idx < 0 || idx >= this.metadata.length) return [];
+    if (!this.api || idx < 0 || idx >= this.count) return [];
     const n = this.api.compute_orbit_path(
       idx,
       unixMs,
