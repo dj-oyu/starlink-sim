@@ -4,6 +4,7 @@ import { useFrame, useThree, RenderPerfStats } from '../fiber/PreactFiber';
 import {
   StarlinkSimEngine,
   ObserverConfig,
+  EARTH_RADIUS_KM,
   latLonAltToThree,
   SatelliteTelemetry,
 } from '../wasm/simEngine';
@@ -51,6 +52,16 @@ export interface ViewCommands {
   focusGroundStation: () => void;
   focusSatellite: (idx: number) => void;
   setAutoRotate: (on: boolean) => void;
+}
+
+/** Anchor buffers and shared uniforms of the GPU position path (`?gpu=1`). */
+interface GpuBuffers {
+  pvPoints: THREE.InterleavedBuffer;
+  pvTrail: THREE.InstancedInterleavedBuffer;
+  tPoints: THREE.BufferAttribute;
+  tTrail: THREE.InstancedBufferAttribute;
+  styleTrail: THREE.InstancedBufferAttribute;
+  uniforms: Record<string, { value: number }>;
 }
 
 /** Smooth camera transition state (preallocated; advanced once per frame). */
@@ -177,6 +188,63 @@ const TRAIL_FRAG = /* glsl */ `
   }
 `;
 
+/**
+ * GPU mode: positions are not uploaded per frame. Each satellite carries an "anchor" (exact SGP4
+ * state: position aP in km, velocity aV in km/s, TEME frame, at time aT seconds) and the vertex
+ * shader rotates it along its near-circular orbit to the current shader time uT:
+ *   r(dt) = r0 cos(w dt) + (v0 / w) sin(w dt),  w = |v0| / |r0|
+ * then applies the GMST rotation (TEME -> ECEF) and Three.js axes. Error vs full SGP4: ~20 m mean
+ * at dt = 60 s, ~0.5 km at 300 s (measured on the real constellation).
+ */
+const GPU_EXTRAP_GLSL = /* glsl */ `
+  attribute vec3 aP;
+  attribute vec3 aV;
+  attribute float aT;
+  uniform float uT;
+  uniform float uCosG;
+  uniform float uSinG;
+  uniform float uInvR;
+
+  vec3 extrapolate(float tOff) {
+    float r = length(aP);
+    if (r < 1.0) return vec3(1.0e6); // no valid anchor: park far outside the view
+    float w = length(aV) / r;
+    float dt = uT - aT - tOff;
+    float phi = w * dt;
+    float c = cos(phi);
+    float sw = w > 1.0e-9 ? sin(phi) / w : dt;
+    vec3 q = aP * c + aV * sw;
+    float ex = uCosG * q.x + uSinG * q.y;
+    float ey = -uSinG * q.x + uCosG * q.y;
+    return vec3(ex, q.z, -ey) * uInvR;
+  }
+`;
+const SAT_POINTS_VERT_GPU = SAT_POINTS_VERT.replace(
+  'attribute float aStyle;',
+  'attribute float aStyle;\n' + GPU_EXTRAP_GLSL,
+).replace(
+  'vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);',
+  'vec4 mvPosition = modelViewMatrix * vec4(extrapolate(0.0), 1.0);',
+);
+const TRAIL_SEC = 29; // seconds of orbital motion a trail spans (~220 km, same as TRAIL_LEN)
+const TRAIL_VERT_GPU = /* glsl */ `
+  attribute float aEnd;
+  attribute float aStyle;
+  uniform float uTrailSec;
+  uniform float uDir;
+  varying float vEnd;
+  ${GPU_EXTRAP_GLSL}
+  void main() {
+    vEnd = aEnd;
+    if (aStyle < -0.5) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      return;
+    }
+    vec3 p = extrapolate(uDir * (1.0 - aEnd) * uTrailSec);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+  }
+`;
+
 const _followCurPos = new THREE.Vector3();
 const _followDelta = new THREE.Vector3();
 
@@ -214,6 +282,8 @@ export function ConstellationView({
   const trailLineRef = useRef<THREE.LineSegments | null>(null);
   const trailMatRef = useRef<THREE.ShaderMaterial | null>(null);
   const trailStateRef = useRef({ prevSimMs: NaN });
+  const gpuFrameRef = useRef({ t: 0, cosG: 1, sinG: 0 });
+  const gpuRevRef = useRef(-1);
 
   const {
     posAttr,
@@ -225,6 +295,7 @@ export function ConstellationView({
     trailEndAttr,
     trailDir,
     prevPos,
+    gpuBufs,
   } = useMemo(() => {
     const count = Math.max(satCount, 1);
     const pos = new Float32Array(count * 3);
@@ -246,7 +317,39 @@ export function ConstellationView({
     const tEnd = new Float32Array(count * 2);
     for (let i = 0; i < count; i++) tEnd[i * 2 + 1] = 1;
 
+    // GPU mode: anchor buffers shared by the points and the (instanced) trail geometry
+    let gpuB: GpuBuffers | null = null;
+    if (engine.gpuMode && engine.anchorPV.length === satCount * 6 && satCount > 0) {
+      const dyn = THREE.DynamicDrawUsage;
+      const pvPoints = new THREE.InterleavedBuffer(engine.anchorPV, 6);
+      pvPoints.setUsage(dyn);
+      const pvTrail = new THREE.InstancedInterleavedBuffer(engine.anchorPV, 6, 1);
+      pvTrail.setUsage(dyn);
+      const tPoints = new THREE.BufferAttribute(engine.anchorT, 1);
+      tPoints.setUsage(dyn);
+      const tTrail = new THREE.InstancedBufferAttribute(engine.anchorT, 1, false, 1);
+      tTrail.setUsage(dyn);
+      const styleTrail = new THREE.InstancedBufferAttribute(style, 1, false, 1);
+      styleTrail.setUsage(dyn);
+      gpuB = {
+        pvPoints,
+        pvTrail,
+        tPoints,
+        tTrail,
+        styleTrail,
+        uniforms: {
+          uT: { value: 0 },
+          uCosG: { value: 1 },
+          uSinG: { value: 0 },
+          uInvR: { value: 1 / EARTH_RADIUS_KM },
+          uTrailSec: { value: TRAIL_SEC },
+          uDir: { value: 1 },
+        },
+      };
+    }
+
     return {
+      gpuBufs: gpuB,
       posAttr: pAttr,
       styleAttr: stAttr,
       commLineAttr: commAttr,
@@ -257,7 +360,7 @@ export function ConstellationView({
       trailDir: new Float32Array(count * 3),
       prevPos: new Float32Array(count * 3),
     };
-  }, [satCount]);
+  }, [satCount, engine, engine.anchorPV]);
 
   // Create and attach Three.js Constellation objects to Scene
   useEffect(() => {
@@ -268,9 +371,15 @@ export function ConstellationView({
     const ptsGeom = new THREE.BufferGeometry();
     ptsGeom.setAttribute('position', posAttr);
     ptsGeom.setAttribute('aStyle', styleAttr);
+    if (gpuBufs) {
+      ptsGeom.setAttribute('aP', new THREE.InterleavedBufferAttribute(gpuBufs.pvPoints, 3, 0));
+      ptsGeom.setAttribute('aV', new THREE.InterleavedBufferAttribute(gpuBufs.pvPoints, 3, 3));
+      ptsGeom.setAttribute('aT', gpuBufs.tPoints);
+    }
     const ptsMat = new THREE.ShaderMaterial({
-      vertexShader: SAT_POINTS_VERT,
+      vertexShader: gpuBufs ? SAT_POINTS_VERT_GPU : SAT_POINTS_VERT,
       fragmentShader: SAT_POINTS_FRAG,
+      uniforms: gpuBufs ? gpuBufs.uniforms : {},
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -282,13 +391,29 @@ export function ConstellationView({
     pointsRef.current = pts;
 
     // 1b. Motion trails (additive streaks behind each satellite)
-    const trailGeom = new THREE.BufferGeometry();
-    trailGeom.setAttribute('position', trailPosAttr);
-    trailGeom.setAttribute('aEnd', trailEndAttr);
+    let trailGeom: THREE.BufferGeometry;
+    if (gpuBufs) {
+      // One 2-vertex segment instanced per satellite; the shader computes both ends from the anchor
+      const ig = new THREE.InstancedBufferGeometry();
+      ig.instanceCount = satCount;
+      ig.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      ig.setAttribute('aEnd', new THREE.BufferAttribute(new Float32Array([0, 1]), 1));
+      ig.setAttribute('aP', new THREE.InterleavedBufferAttribute(gpuBufs.pvTrail, 3, 0));
+      ig.setAttribute('aV', new THREE.InterleavedBufferAttribute(gpuBufs.pvTrail, 3, 3));
+      ig.setAttribute('aT', gpuBufs.tTrail);
+      ig.setAttribute('aStyle', gpuBufs.styleTrail);
+      trailGeom = ig;
+    } else {
+      trailGeom = new THREE.BufferGeometry();
+      trailGeom.setAttribute('position', trailPosAttr);
+      trailGeom.setAttribute('aEnd', trailEndAttr);
+    }
     const trailMat = new THREE.ShaderMaterial({
-      vertexShader: TRAIL_VERT,
+      vertexShader: gpuBufs ? TRAIL_VERT_GPU : TRAIL_VERT,
       fragmentShader: TRAIL_FRAG,
-      uniforms: { uOpacity: { value: 0 } },
+      uniforms: gpuBufs
+        ? { uOpacity: { value: 0 }, ...gpuBufs.uniforms }
+        : { uOpacity: { value: 0 } },
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -388,7 +513,7 @@ export function ConstellationView({
       trailLineRef.current = null;
       trailMatRef.current = null;
     };
-  }, [scene, posAttr, styleAttr, commLineAttr, trailPosAttr, trailEndAttr]);
+  }, [scene, posAttr, styleAttr, commLineAttr, trailPosAttr, trailEndAttr, gpuBufs, satCount]);
 
   // Keep MoonBit observer & Ground Station geometry synced
   const obsThreePos = useMemo(() => {
@@ -547,6 +672,10 @@ export function ConstellationView({
         },
         focusSatellite: (idx) => {
           const arr = posAttr.array as Float32Array;
+          if (engine.gpuMode) {
+            const gf = gpuFrameRef.current;
+            engine.extrapolateInto(idx, gf.t, gf.cosG, gf.sinG, arr, idx * 3);
+          }
           tmp.set(arr[idx * 3], arr[idx * 3 + 1], arr[idx * 3 + 2]);
           if (tmp.lengthSq() < 1e-9) return;
           flyTo(tmp, Math.max(1.9, fitDistance() * 0.75), _origin, 1.0);
@@ -597,6 +726,32 @@ export function ConstellationView({
 
     // 1. Run MoonBit Wasm SGP4 propagation
     engine.propagate(currentSimMs, timeScale, isPlaying);
+    const gpuB = gpuBufs;
+    const gf = gpuFrameRef.current;
+    if (gpuB) {
+      engine.getGpuFrame(currentSimMs, gf);
+      const u = gpuB.uniforms;
+      u.uT.value = gf.t;
+      u.uCosG.value = gf.cosG;
+      u.uSinG.value = gf.sinG;
+      u.uDir.value = timeScale < 0 ? -1 : 1;
+      if (gpuRevRef.current !== engine.anchorRevision) {
+        // Upload only the range of anchors refreshed this frame
+        gpuRevRef.current = engine.anchorRevision;
+        const lo = engine.anchorLo;
+        const hi = engine.anchorHi;
+        for (const b of [gpuB.pvPoints, gpuB.pvTrail]) {
+          b.clearUpdateRanges();
+          b.addUpdateRange(lo * 6, (hi - lo) * 6);
+          b.needsUpdate = true;
+        }
+        for (const a of [gpuB.tPoints, gpuB.tTrail]) {
+          a.clearUpdateRanges();
+          a.addUpdateRange(lo, hi - lo);
+          a.needsUpdate = true;
+        }
+      }
+    }
     sunDirectionRef.current = engine.sunDirectionThree;
 
     // 2. SWAR 4-sat-at-once status readout + single-pass WebGL buffer sync
@@ -636,7 +791,7 @@ export function ConstellationView({
         if (dstStyle[i] !== -1.0) {
           dstStyle[i] = -1.0;
           styleDirty = true;
-          trailPos.fill(0, i * 6, i * 6 + 6); // collapse its trail to a degenerate segment
+          if (!gpuB) trailPos.fill(0, i * 6, i * 6 + 6); // collapse its trail to a degenerate segment
         }
         continue;
       }
@@ -645,13 +800,15 @@ export function ConstellationView({
       const px = dstPos[i3];
       const py = dstPos[i3 + 1];
       const pz = dstPos[i3 + 2];
-      const t6 = i * 6;
-      trailPos[t6] = px - trailDir[i3] * TRAIL_LEN; // tail
-      trailPos[t6 + 1] = py - trailDir[i3 + 1] * TRAIL_LEN;
-      trailPos[t6 + 2] = pz - trailDir[i3 + 2] * TRAIL_LEN;
-      trailPos[t6 + 3] = px; // head
-      trailPos[t6 + 4] = py;
-      trailPos[t6 + 5] = pz;
+      if (!gpuB) {
+        const t6 = i * 6;
+        trailPos[t6] = px - trailDir[i3] * TRAIL_LEN; // tail
+        trailPos[t6 + 1] = py - trailDir[i3 + 1] * TRAIL_LEN;
+        trailPos[t6 + 2] = pz - trailDir[i3 + 2] * TRAIL_LEN;
+        trailPos[t6 + 3] = px; // head
+        trailPos[t6 + 4] = py;
+        trailPos[t6 + 5] = pz;
+      }
 
       const isVis = obsEnabled && (st & 16) !== 0;
       if (isVis) activeVisCount++;
@@ -672,11 +829,12 @@ export function ConstellationView({
     }
 
     engine.visibleCount = activeVisCount;
-    posAttr.needsUpdate = true;
+    if (!gpuB) posAttr.needsUpdate = true; // GPU mode never uploads CPU positions
 
     // Motion trails: estimate each satellite's apparent heading from how far it
     // moved since the last estimate (every ~2 sim-seconds); after a time jump or
     // on the first frame there are no trails until the next estimate.
+    if (!gpuB) {
     const trailState = trailStateRef.current;
     const dtSim = currentSimMs - trailState.prevSimMs;
     if (!(Math.abs(dtSim) < 120000)) {
@@ -700,6 +858,7 @@ export function ConstellationView({
       prevPos.set(dstPos);
       trailState.prevSimMs = currentSimMs;
     }
+    }
     const trailMat = trailMatRef.current;
     if (trailMat) {
       // Fade in while time is advancing, fade out when paused (a paused sky has no motion hint)
@@ -707,9 +866,10 @@ export function ConstellationView({
       const u = trailMat.uniforms.uOpacity;
       u.value += (target - u.value) * Math.min(1, dtClamped * 4);
     }
-    trailPosAttr.needsUpdate = true;
+    if (!gpuB) trailPosAttr.needsUpdate = true;
     if (styleDirty) {
       styleAttr.needsUpdate = true;
+      if (gpuB) gpuB.styleTrail.needsUpdate = true;
     }
 
     // 3. Update Ground Station visibility & communication links via Wasm visible_indices
@@ -733,6 +893,7 @@ export function ConstellationView({
           const sIdx = api.get_visible_sat_index(k);
           if (dstStyle[sIdx] < 0) continue;
           const idx3 = sIdx * 3;
+          if (gpuB) engine.extrapolateInto(sIdx, gf.t, gf.cosG, gf.sinG, dstPos, idx3);
           commLinePositions[ptr++] = ox;
           commLinePositions[ptr++] = oy;
           commLinePositions[ptr++] = oz;
@@ -753,6 +914,7 @@ export function ConstellationView({
     // 4. Update Selected Satellite Marker, Orbit Path & Camera Follow
     if (selectedSatIndex !== null && (satStatus[selectedSatIndex] & 8) !== 0) {
       const s3 = selectedSatIndex * 3;
+      if (gpuB) engine.extrapolateInto(selectedSatIndex, gf.t, gf.cosG, gf.sinG, dstPos, s3);
       const sx = dstPos[s3];
       const sy = dstPos[s3 + 1];
       const sz = dstPos[s3 + 2];

@@ -535,6 +535,11 @@ export function App() {
 
     // 2. Check satellite points hit in front of Earth
     if (pointsRef.current && engine) {
+      if (engine.gpuMode) {
+        // GPU mode keeps only stale CPU positions: bring them to "now" before hit-testing
+        const geom = pointsRef.current.geometry;
+        engine.extrapolateAll(simTimeMsRef.current, geom.getAttribute('position').array as Float32Array);
+      }
       const satHits = raycaster.intersectObject(pointsRef.current, false);
       const satStatus = engine.satStatus;
       for (const hit of satHits) {

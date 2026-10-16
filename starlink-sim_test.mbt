@@ -329,3 +329,39 @@ test "sliced propagation over all slices equals one full pass (positions, status
   assert_eq(@starlink-sim.propagate_constellation_slice(t, 4, 4), 0)
   assert_eq(@starlink-sim.propagate_constellation_slice(t, 0, 0), 0)
 }
+
+///|
+test "anchored slices refresh the same state as plain slices and expose anchor buffers" {
+  let n = load_test_constellation()
+  let t = @starlink-sim.jd_to_unix_ms(
+      @starlink-sim.tle_epoch_to_jd(26, 289.17018502),
+    ) +
+    1800000.0
+  @starlink-sim.set_observer(35.6762, 139.6503, 0.04, 5.0, 1)
+  let _ = @starlink-sim.propagate_constellation(t)
+  let px : Array[Double] = []
+  let st : Array[Int32] = []
+  for i in 0..<n {
+    px.push(@starlink-sim.get_sat_ecef_x(i))
+    st.push(@starlink-sim.get_sat_status(i))
+  }
+  assert_eq(@starlink-sim.prepare_anchor_buffers(), n)
+  assert_true(@starlink-sim.get_anchor_pv_ptr() > 0)
+  assert_true(@starlink-sim.get_anchor_t_ptr() > 0)
+  let pv0 = @starlink-sim.get_anchor_pv_ptr()
+  // Fresh state, anchored refresh in 3 slices at the same instant
+  let _ = load_test_constellation()
+  let _ = @starlink-sim.prepare_anchor_buffers()
+  @starlink-sim.set_observer(35.6762, 139.6503, 0.04, 5.0, 1)
+  for k in 0..<3 {
+    let _ = @starlink-sim.propagate_constellation_slice_anchored(t, k, 3, t)
+  }
+  for i in 0..<n {
+    // same state as the plain path (anchored refresh must not change positions/visibility)
+    assert_true((@starlink-sim.get_sat_ecef_x(i) - px[i]).abs() < 1.0e-6)
+    assert_eq(@starlink-sim.get_sat_status(i), st[i])
+  }
+  assert_true(pv0 > 0)
+  // invalid slice arguments are rejected
+  assert_eq(@starlink-sim.propagate_constellation_slice_anchored(t, 3, 3, t), 0)
+}

@@ -29,6 +29,10 @@ export interface WasmSimExports {
   get_sat_speed_kms: (idx: number) => number;
   get_sat_status: (idx: number) => number;
   get_sat_status_quad: (base_idx: number) => number;
+  propagate_constellation_slice_anchored: (unix_ms: number, slice: number, slice_count: number, base_ms: number) => number;
+  prepare_anchor_buffers: () => number;
+  get_anchor_pv_ptr: () => number;
+  get_anchor_t_ptr: () => number;
   prepare_render_buffer: () => number;
   get_render_buffer_ptr: () => number;
   get_sat_valid: (idx: number) => number;
@@ -101,6 +105,40 @@ const WASM_BUDGET_MS = 4; // target wasm time per frame
 const MAX_SLICES = 8;
 const MAX_STALE_KM = 12; // max position age error (~0.5 px on a 400 px globe)
 const JUMP_MS = 60000; // sim-time step treated as a seek (forces a full pass)
+// --- GPU mode (`?gpu=1`) ---------------------------------------------------------------
+// wasm refreshes per-satellite "anchors" (exact SGP4 state) at a low rate; the GPU rotates each
+// satellite along its orbit from its anchor to the current time (see ConstellationView shaders).
+const GPU_ENABLED = (() => {
+  try {
+    return new URLSearchParams(location.search).get('gpu') === '1';
+  } catch {
+    return false;
+  }
+})();
+const GPU_BUDGET_MS = 1.5; // target wasm time per frame in GPU mode
+const GPU_MAX_SLICES = 64;
+// Anchor refresh cycle (sim seconds): the CPU-side features (visible list, sky plot, picking)
+// see positions at most this stale. Rendering error grows with anchor age (~0.5 km mean at
+// 300 s, ~20 m at 60 s), so at high playback speeds the cycle is allowed to be longer.
+const GPU_CYCLE_SIM_S = 30;
+const GPU_CYCLE_SIM_FAST_S = 240;
+const GPU_FAST_SPEED = 100; // playback speed (x) above which the longer cycle is used
+const GPU_REBASE_S = 3000; // keep float32 anchor times small (precision ~0.2 ms at 3000 s)
+
+/** Greenwich mean sidereal time (rad), IAU-82 - identical to `gstime` in time.mbt. */
+export function gmstRad(unixMs: number): number {
+  const jd = 2440587.5 + unixMs / 86400000.0;
+  const t = (jd - 2451545.0) / 36525.0;
+  let temp =
+    -6.2e-6 * t * t * t +
+    0.093104 * t * t +
+    (876600.0 * 3600.0 + 8640184.812866) * t +
+    67310.54841;
+  temp = ((temp * Math.PI) / 180.0 / 240.0) % (2 * Math.PI);
+  if (temp < 0) temp += 2 * Math.PI;
+  return temp;
+}
+
 // `?slices=N` forces N slices per frame (testing / comparing devices); 0 = automatic.
 const FORCED_SLICES = (() => {
   try {
@@ -209,6 +247,21 @@ export class StarlinkSimEngine {
   get wasmFullPassMs(): number {
     return this.fullPassMsEma;
   }
+  // --- GPU mode state ---
+  public readonly gpuMode = GPU_ENABLED;
+  /** Per-satellite anchors for the GPU: x y z (km) vx vy vz (km/s) in TEME, 6 floats each. */
+  public anchorPV: Float32Array = new Float32Array(0);
+  /** Anchor times in seconds since `anchorBaseMs` (float32; re-based to stay small). */
+  public anchorT: Float32Array = new Float32Array(0);
+  public anchorBaseMs = NaN;
+  /** Satellite index range [lo, hi) of anchors refreshed by the last propagate(); bumps `anchorRevision`. */
+  public anchorLo = 0;
+  public anchorHi = 0;
+  public anchorRevision = 0;
+  private anchorPvView: Float32Array = new Float32Array(0);
+  private anchorTView: Float32Array = new Float32Array(0);
+  private anchorPvPtr = 0;
+  private anchorTPtr = 0;
   private renderView: Float32Array = new Float32Array(0);
   private renderPtr = 0;
   private renderFloats = 0;
@@ -381,6 +434,22 @@ export class StarlinkSimEngine {
     // Render-ready positions live in wasm memory; JS bulk-copies them each frame
     // (instead of 3 JS->wasm calls per satellite, which is very slow on Safari/JSC).
     this.forceFullPass = true; // new satellites: make everything consistent first
+    if (this.gpuMode) {
+      this.api.prepare_anchor_buffers();
+      this.anchorPvPtr = this.api.get_anchor_pv_ptr();
+      this.anchorTPtr = this.api.get_anchor_t_ptr();
+      // Keep the same typed arrays when the count is unchanged (GPU attributes reference them)
+      if (this.anchorPV.length !== total * 6) {
+        this.anchorPV = new Float32Array(total * 6);
+        this.anchorT = new Float32Array(total);
+      } else {
+        this.anchorPV.fill(0);
+        this.anchorT.fill(0);
+      }
+      this.anchorBaseMs = NaN;
+      this.anchorPvView = new Float32Array(0);
+      this.anchorTView = new Float32Array(0);
+    }
     this.renderFloats = this.api.prepare_render_buffer();
     this.renderPtr = this.api.get_render_buffer_ptr();
     this.renderView = new Float32Array(0);
@@ -424,6 +493,10 @@ export class StarlinkSimEngine {
    */
   propagate(unixMs: number, timeScale = 1, isPlaying = true): void {
     if (!this.api) return;
+    if (this.gpuMode) {
+      this.propagateGpu(unixMs, timeScale, isPlaying);
+      return;
+    }
     const jumped = !(Math.abs(unixMs - this.lastSimMs) < JUMP_MS);
     this.lastSimMs = unixMs;
 
@@ -470,6 +543,129 @@ export class StarlinkSimEngine {
     this.wasmPureSgp4Ms = t1 - t0;
     this.lastPropagateMs = t1 - t0;
     this.wasmMemoryBytes = api.memory?.buffer?.byteLength ?? 0;
+  }
+
+  /**
+   * GPU mode: refresh 1/k of the satellites' anchors (exact SGP4 state) per frame. The GPU
+   * extrapolates every satellite from its anchor, so k can be large: the cycle is limited only by
+   * how stale the CPU-side features may get (and, at high playback speeds, by anchor age).
+   */
+  private propagateGpu(unixMs: number, timeScale: number, isPlaying: boolean): void {
+    const api = this.api;
+    const n = this.count;
+    const jumped = !(Math.abs(unixMs - this.lastSimMs) < JUMP_MS);
+    this.lastSimMs = unixMs;
+
+    if (!Number.isFinite(this.anchorBaseMs)) this.anchorBaseMs = unixMs;
+    let rebased = false;
+    if (Math.abs((unixMs - this.anchorBaseMs) / 1000) > GPU_REBASE_S) {
+      const shift = (unixMs - this.anchorBaseMs) / 1000;
+      const t = this.anchorT;
+      for (let i = 0; i < t.length; i++) t[i] -= shift;
+      this.anchorBaseMs = unixMs;
+      rebased = true;
+    }
+
+    const speed = isPlaying ? Math.abs(timeScale) : 0;
+    const simPerFrame = speed / 60;
+    const cycleSim = speed > GPU_FAST_SPEED ? GPU_CYCLE_SIM_FAST_S : GPU_CYCLE_SIM_S;
+    const kAllowed =
+      simPerFrame <= 0
+        ? GPU_MAX_SLICES
+        : Math.max(1, Math.min(GPU_MAX_SLICES, Math.floor(cycleSim / simPerFrame)));
+    const kCost = Math.max(1, Math.ceil(this.fullPassMsEma / GPU_BUDGET_MS));
+    let k = Math.min(kAllowed, kCost, n);
+    if (jumped || this.forceFullPass) {
+      k = 1;
+      this.anchorBaseMs = unixMs;
+      this.anchorT.fill(0);
+    }
+    this.forceFullPass = false;
+
+    const idx = k === 1 ? 0 : this.sliceCursor % k;
+    this.sliceCursor = k === 1 ? 0 : (idx + 1) % k;
+    const t0 = performance.now();
+    api.propagate_constellation_slice_anchored(unixMs, idx, k, this.anchorBaseMs);
+    const t1 = performance.now();
+
+    // Copy the refreshed range of anchors out of wasm memory (re-create views if memory grew)
+    const buf = api.memory.buffer;
+    if (this.anchorPvView.buffer !== buf) {
+      this.anchorPvView = new Float32Array(buf, this.anchorPvPtr, n * 6);
+      this.anchorTView = new Float32Array(buf, this.anchorTPtr, n);
+    }
+    const lo = Math.floor((n * idx) / k);
+    const hi = Math.floor((n * (idx + 1)) / k);
+    this.anchorPV.set(this.anchorPvView.subarray(lo * 6, hi * 6), lo * 6);
+    this.anchorT.set(this.anchorTView.subarray(lo, hi), lo);
+    // A re-base changed every anchor time, so upload everything this frame
+    this.anchorLo = rebased || k === 1 ? 0 : lo;
+    this.anchorHi = rebased || k === 1 ? n : hi;
+    this.anchorRevision++;
+
+    const est = (t1 - t0) * k; // cost of one full anchored pass
+    this.fullPassMsEma = this.emaReady ? this.fullPassMsEma * 0.9 + est * 0.1 : est;
+    this.emaReady = true;
+    this.wasmSlices = k;
+
+    const sx = api.get_sun_ecef_x();
+    const sy = api.get_sun_ecef_y();
+    const sz = api.get_sun_ecef_z();
+    this.sunDirectionThree[0] = sx;
+    this.sunDirectionThree[1] = sz;
+    this.sunDirectionThree[2] = -sy;
+    this.wasmPureSgp4Ms = t1 - t0;
+    this.lastPropagateMs = t1 - t0;
+    this.wasmMemoryBytes = api.memory?.buffer?.byteLength ?? 0;
+  }
+
+  /** Shader time (seconds since the anchor base) and GMST rotation for `unixMs`. */
+  getGpuFrame(unixMs: number, out: { t: number; cosG: number; sinG: number }): void {
+    out.t = (unixMs - this.anchorBaseMs) / 1000;
+    const g = gmstRad(unixMs);
+    out.cosG = Math.cos(g);
+    out.sinG = Math.sin(g);
+  }
+
+  /**
+   * CPU twin of the vertex shader: satellite `i` at shader time `tSec` in Three.js axes (Earth
+   * radii), written to out[o..o+2]. Used for the few satellites CPU-side features need exactly
+   * (selected marker, comm-link endpoints) so they stay glued to what the GPU draws.
+   */
+  extrapolateInto(
+    i: number,
+    tSec: number,
+    cosG: number,
+    sinG: number,
+    out: Float32Array,
+    o: number,
+  ): void {
+    const pv = this.anchorPV;
+    const b = i * 6;
+    const x = pv[b], y = pv[b + 1], z = pv[b + 2];
+    const vx = pv[b + 3], vy = pv[b + 4], vz = pv[b + 5];
+    const dt = tSec - this.anchorT[i];
+    const r = Math.sqrt(x * x + y * y + z * z);
+    const w = Math.sqrt(vx * vx + vy * vy + vz * vz) / Math.max(r, 1);
+    const phi = w * dt;
+    const c = Math.cos(phi);
+    const sw = w > 1e-9 ? Math.sin(phi) / w : dt;
+    const qx = x * c + vx * sw;
+    const qy = y * c + vy * sw;
+    const qz = z * c + vz * sw;
+    const invR = 1 / EARTH_RADIUS_KM;
+    out[o] = (cosG * qx + sinG * qy) * invR;
+    out[o + 1] = qz * invR;
+    out[o + 2] = -(-sinG * qx + cosG * qy) * invR;
+  }
+
+  /** Extrapolate every satellite to `unixMs` into `out` (3 floats each); used before picking. */
+  extrapolateAll(unixMs: number, out: Float32Array): void {
+    const g = gmstRad(unixMs);
+    const cg = Math.cos(g);
+    const sg = Math.sin(g);
+    const t = (unixMs - this.anchorBaseMs) / 1000;
+    for (let i = 0; i < this.count; i++) this.extrapolateInto(i, t, cg, sg, out, i * 3);
   }
 
   getSatelliteTelemetry(idx: number): SatelliteTelemetry | null {

@@ -10,6 +10,10 @@ priv struct SimState {
   // Render-ready positions (Three.js axes, Earth radii, Float32) written straight into
   // wasm linear memory so JS can bulk-copy them instead of making 3 calls per satellite.
   mut render_pos : FixedArray[Float]
+  // GPU-extrapolation anchors: per satellite the exact SGP4 TEME state (x y z km, vx vy vz km/s)
+  // and the time it was computed (seconds since the host-chosen base time), in wasm memory.
+  mut anchor_pv : FixedArray[Float]
+  mut anchor_t : FixedArray[Float]
   mut visible_indices : Array[Int32]
   mut obs_lat_deg : Double
   mut obs_lon_deg : Double
@@ -39,6 +43,8 @@ let sim_state : SimState = {
   ecef_z: [],
   sat_status: [],
   render_pos: FixedArray::make(0, Float::from_double(0.0)),
+  anchor_pv: FixedArray::make(0, Float::from_double(0.0)),
+  anchor_t: FixedArray::make(0, Float::from_double(0.0)),
   visible_indices: [],
   obs_lat_deg: 35.6762, // Tokyo default
   obs_lon_deg: 139.6503,
@@ -69,6 +75,8 @@ pub fn reset_constellation() -> Unit {
   sim_state.ecef_z = []
   sim_state.sat_status = []
   sim_state.render_pos = FixedArray::make(0, Float::from_double(0.0))
+  sim_state.anchor_pv = FixedArray::make(0, Float::from_double(0.0))
+  sim_state.anchor_t = FixedArray::make(0, Float::from_double(0.0))
   sim_state.visible_indices = []
   sim_state.visible_count = 0
 }
@@ -138,7 +146,7 @@ pub fn set_observer(
 /// `(shell_id | (valid << 3) | (visible << 4))` into `sat_status` with zero transcendental calls.
 /// Returns the number of valid propagated satellites.
 pub fn propagate_constellation(unix_ms : Double) -> Int32 {
-  propagate_slice_impl(unix_ms, 0, 1)
+  propagate_slice_impl(unix_ms, 0, 1, false, 0.0)
 }
 
 ///|
@@ -155,7 +163,34 @@ pub fn propagate_constellation_slice(
   if slice_count < 1 || slice < 0 || slice >= slice_count {
     return 0
   }
-  propagate_slice_impl(unix_ms, slice, slice_count)
+  propagate_slice_impl(unix_ms, slice, slice_count, false, 0.0)
+}
+
+///|
+/// Finite-difference step used to derive anchor velocities.
+let anchor_dt_sec : Double = 0.5
+
+///|
+let anchor_dt_min : Double = 0.5 / 60.0
+
+///|
+/// Standard gravitational parameter of the Earth (WGS-72, as used by SGP4), km^3/s^2.
+let earth_mu_km3s2 : Double = 398600.8
+
+///|
+/// Like `propagate_constellation_slice`, but also records each refreshed satellite's SGP4 TEME state and its time (seconds since `base_ms`) in
+/// the anchor buffers (see `prepare_anchor_buffers`). A GPU vertex shader can then extrapolate
+/// positions from these anchors at render time, so anchors only need refreshing at a low rate.
+pub fn propagate_constellation_slice_anchored(
+  unix_ms : Double,
+  slice : Int32,
+  slice_count : Int32,
+  base_ms : Double,
+) -> Int32 {
+  if slice_count < 1 || slice < 0 || slice >= slice_count {
+    return 0
+  }
+  propagate_slice_impl(unix_ms, slice, slice_count, true, base_ms)
 }
 
 ///|
@@ -163,6 +198,8 @@ fn propagate_slice_impl(
   unix_ms : Double,
   slice : Int32,
   slice_count : Int32,
+  anchored : Bool,
+  base_ms : Double,
 ) -> Int32 {
   let jd = unix_ms_to_jd(unix_ms)
   sim_state.last_jd = jd
@@ -222,6 +259,12 @@ fn propagate_slice_impl(
   }
   let render_pos = sim_state.render_pos
   let write_render = render_pos.length() == n * 3
+  let anchor_pv = sim_state.anchor_pv
+  let anchor_t = sim_state.anchor_t
+  let write_anchor = anchored &&
+    anchor_pv.length() == n * 6 &&
+    anchor_t.length() == n
+  let anchor_time = Float::from_double((unix_ms - base_ms) / 1000.0)
   let inv_r = 1.0 / earth_radius_km
   let mut valid_count = 0
   let mut vis_count = 0
@@ -237,6 +280,30 @@ fn propagate_slice_impl(
       let rx = pos_out.x
       let ry = pos_out.y
       let rz = pos_out.z
+      if write_anchor {
+        // Velocity from a second (cheap, memoised) fast-path evaluation half a second later:
+        // v = (p1 - p0) / dt - 0.5 * a * dt (a points inward, so this adds a term), a = two-body gravity at p0 (the J2 part of
+        // the acceleration is ~1e-3 of this, so the remaining error is a few mm/s).
+        let r2 = rx * rx + ry * ry + rz * rz
+        let r1 = r2.sqrt()
+        let mut vx = 0.0
+        let mut vy = 0.0
+        let mut vz = 0.0
+        if sgp4_pos_into(sat, tsince + anchor_dt_min) {
+          let g = 0.5 * anchor_dt_sec * earth_mu_km3s2 / (r2 * r1)
+          vx = (pos_out.x - rx) / anchor_dt_sec + g * rx
+          vy = (pos_out.y - ry) / anchor_dt_sec + g * ry
+          vz = (pos_out.z - rz) / anchor_dt_sec + g * rz
+        }
+        let a6 = i * 6
+        anchor_pv.unsafe_set(a6, Float::from_double(rx))
+        anchor_pv.unsafe_set(a6 + 1, Float::from_double(ry))
+        anchor_pv.unsafe_set(a6 + 2, Float::from_double(rz))
+        anchor_pv.unsafe_set(a6 + 3, Float::from_double(vx))
+        anchor_pv.unsafe_set(a6 + 4, Float::from_double(vy))
+        anchor_pv.unsafe_set(a6 + 5, Float::from_double(vz))
+        anchor_t.unsafe_set(i, anchor_time)
+      }
       let ex = cos_g * rx + sin_g * ry
       let ey = -sin_g * rx + cos_g * ry
       let ez = rz
@@ -565,4 +632,26 @@ pub fn prepare_render_buffer() -> Int32 {
 /// `propagate_constellation`. Valid until the next `prepare_render_buffer` / `reset_constellation`.
 pub fn get_render_buffer_ptr() -> Int32 {
   addr_of_floats(sim_state.render_pos)
+}
+
+///|
+/// Allocate the GPU-anchor buffers (6 + 1 Float32 per satellite). Call after all satellites are
+/// loaded. Returns the number of satellites.
+pub fn prepare_anchor_buffers() -> Int32 {
+  let n = sim_state.satellites.length()
+  sim_state.anchor_pv = FixedArray::make(n * 6, Float::from_double(0.0))
+  sim_state.anchor_t = FixedArray::make(n, Float::from_double(0.0))
+  n
+}
+
+///|
+/// Wasm address of the anchor state buffer (6 Float32 per satellite: x y z vx vy vz, TEME, km & km/s).
+pub fn get_anchor_pv_ptr() -> Int32 {
+  addr_of_floats(sim_state.anchor_pv)
+}
+
+///|
+/// Wasm address of the anchor time buffer (1 Float32 per satellite: seconds since `base_ms`).
+pub fn get_anchor_t_ptr() -> Int32 {
+  addr_of_floats(sim_state.anchor_t)
 }

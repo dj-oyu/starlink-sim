@@ -595,11 +595,9 @@ pub fn sgp4_propagate_pos(
 }
 
 ///|
-/// Full SGP4 propagation returning both position (km) and velocity (km/s) in TEME frame.
-pub fn sgp4_propagate(
-  sat : SatRec,
-  tsince : Double,
-) -> (Double, Double, Double, Double, Double, Double, Bool) {
+/// Full SGP4 propagation writing position (km) and velocity (km/s) in the TEME frame into
+/// `pos_out` / `vel_out` (allocation-free). Returns whether the state is valid.
+fn sgp4_full_into(sat : SatRec, tsince : Double) -> Bool {
   let vkmpersec = earth_radius_km * xke / 60.0
 
   // Update for secular gravity and atmospheric drag
@@ -633,7 +631,7 @@ pub fn sgp4_propagate(
   let inclm = sat.inclo
 
   if nm_init <= 0.0 {
-    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+    return false
   }
 
   let am = sat.a * tempa * tempa
@@ -642,7 +640,7 @@ pub fn sgp4_propagate(
   em = em - tempe
 
   if em >= 1.0 || em < -0.001 {
-    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+    return false
   }
   if em < 1.0e-6 {
     em = 1.0e-6
@@ -665,7 +663,7 @@ pub fn sgp4_propagate(
   let mp = mm_norm
 
   if ep <= 0.0 || ep >= 1.0 {
-    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+    return false
   }
 
   // Long period periodics
@@ -703,7 +701,7 @@ pub fn sgp4_propagate(
   let one_minus_el2 = 1.0 - el2
   let pl = am * one_minus_el2
   if pl < 0.0 {
-    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+    return false
   }
 
   let rl = am * (1.0 - ecose)
@@ -757,9 +755,24 @@ pub fn sgp4_propagate(
   let vy = (mvt * uy + rvdot * vy_u) * vkmpersec
   let vz = (mvt * uz + rvdot * vz_u) * vkmpersec
 
-  if mrt < 1.0 {
-    return (rx, ry, rz, vx, vy, vz, false)
-  }
+  pos_out.x = rx
+  pos_out.y = ry
+  pos_out.z = rz
+  vel_out.x = vx
+  vel_out.y = vy
+  vel_out.z = vz
+  mrt >= 1.0
+}
 
-  (rx, ry, rz, vx, vy, vz, true)
+///|
+let vel_out : PosOut = { x: 0.0, y: 0.0, z: 0.0, }
+
+///|
+/// Full SGP4 propagation returning both position (km) and velocity (km/s) in TEME frame.
+pub fn sgp4_propagate(
+  sat : SatRec,
+  tsince : Double,
+) -> (Double, Double, Double, Double, Double, Double, Bool) {
+  let ok = sgp4_full_into(sat, tsince)
+  (pos_out.x, pos_out.y, pos_out.z, vel_out.x, vel_out.y, vel_out.z, ok)
 }

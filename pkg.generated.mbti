@@ -22,6 +22,10 @@ pub fn ecef_to_geodetic(Double, Double, Double) -> (Double, Double, Double)
 
 pub fn geodetic_to_ecef(Double, Double, Double) -> (Double, Double, Double)
 
+pub fn get_anchor_pv_ptr() -> Int
+
+pub fn get_anchor_t_ptr() -> Int
+
 pub fn get_orbit_path_coord(Int, Int) -> Double
 
 pub fn get_render_buffer_ptr() -> Int
@@ -96,11 +100,15 @@ pub fn parse_tle_lines(String, String) -> TleData
 
 pub let pi : Double
 
+pub fn prepare_anchor_buffers() -> Int
+
 pub fn prepare_render_buffer() -> Int
 
 pub fn propagate_constellation(Double) -> Int
 
 pub fn propagate_constellation_slice(Double, Int, Int) -> Int
+
+pub fn propagate_constellation_slice_anchored(Double, Int, Int, Double) -> Int
 
 pub let rad_to_deg : Double
 
