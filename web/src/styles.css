@@ -647,3 +647,85 @@
   border-radius: 8px;
   background: rgba(2, 6, 23, 0.55);
 }
+
+/* Narrow screens: panels become a bottom sheet toggled from the header */
+.only-narrow {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .only-narrow {
+    display: inline-flex;
+  }
+
+  .hud-root {
+    inset: 8px;
+    gap: 8px;
+  }
+
+  .top-bar {
+    padding: 8px 10px;
+  }
+
+  .metrics-row,
+  .badge-wasm {
+    display: none;
+  }
+
+  .hud-middle {
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
+  }
+
+  .left-sidebar {
+    display: none;
+    width: 100%;
+    max-height: 55%;
+    align-self: auto !important;
+  }
+
+  .left-sidebar.sheet-open {
+    display: flex;
+  }
+
+  .right-column {
+    order: -1;
+    width: 100%;
+    max-height: 40%;
+  }
+
+  .map-controls {
+    top: 0;
+    bottom: auto;
+  }
+
+  .menu-popover {
+    right: 0;
+    width: min(250px, calc(100vw - 32px));
+  }
+
+  .time-readout {
+    order: -1;
+    width: 100%;
+    text-align: center;
+  }
+}
+
+.speed-select {
+  min-width: 78px;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: monospace;
+  padding: 5px 8px;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

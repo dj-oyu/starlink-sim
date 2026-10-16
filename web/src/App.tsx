@@ -290,6 +290,7 @@ export function App() {
   const lastDatetimeMinRef = useRef(-1);
   const [showPerfPanel, setShowPerfPanel] = useState(false);
   const [showDisplayMenu, setShowDisplayMenu] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // bottom sheet on narrow screens
   useEffect(() => {
     if (!showDisplayMenu) return;
     const close = (e: PointerEvent) => {
@@ -630,6 +631,13 @@ export function App() {
         </div>
 
         <div className="top-actions">
+          <button
+            className={`btn only-narrow ${sidebarOpen ? 'active' : ''}`}
+            onClick={() => setSidebarOpen((v) => !v)}
+            aria-expanded={sidebarOpen}
+          >
+            ☰ パネル
+          </button>
           <div className="menu-anchor">
             <button
               className={`btn ${showDisplayMenu ? 'active' : ''}`}
@@ -701,7 +709,7 @@ export function App() {
 
       <div className="hud-middle">
       {/* LEFT SIDEBAR: GROUND STATION, SHELL FILTERS & SEARCH */}
-      <aside className="left-sidebar">
+      <aside className={`left-sidebar ${sidebarOpen ? 'sheet-open' : ''}`}>
         {/* Search (top of sidebar, map-style: results overlay below the input) */}
         <section className="hud-panel search-card">
           <div className="search-input-row">
@@ -1149,19 +1157,46 @@ export function App() {
             </span>
           </div>
 
-          <div className="speed-buttons">
-            {SPEED_OPTIONS.map((spd) => (
-              <button
-                key={spd}
-                className={`btn ${timeScale === spd ? 'active' : ''}`}
-                onClick={() => {
-                  setTimeScale(spd);
-                  setIsPlaying(true);
-                }}
-              >
-                {spd > 0 ? `+${spd}x` : `${spd}x`}
-              </button>
-            ))}
+          <div className="speed-buttons" role="group" aria-label="再生速度">
+            <button
+              className="btn"
+              aria-label="速度を下げる"
+              disabled={SPEED_OPTIONS.indexOf(timeScale) <= 0}
+              onClick={() => {
+                const i = SPEED_OPTIONS.indexOf(timeScale);
+                if (i > 0) setTimeScale(SPEED_OPTIONS[i - 1]);
+                setIsPlaying(true);
+              }}
+            >
+              <Minus size={14} />
+            </button>
+            <select
+              className="speed-select"
+              aria-label="再生速度"
+              value={timeScale}
+              onChange={(e) => {
+                setTimeScale(Number((e.target as HTMLSelectElement).value));
+                setIsPlaying(true);
+              }}
+            >
+              {SPEED_OPTIONS.map((spd) => (
+                <option key={spd} value={spd}>
+                  {spd > 0 ? `+${spd}x` : `${spd}x`}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn"
+              aria-label="速度を上げる"
+              disabled={SPEED_OPTIONS.indexOf(timeScale) >= SPEED_OPTIONS.length - 1}
+              onClick={() => {
+                const i = SPEED_OPTIONS.indexOf(timeScale);
+                if (i < SPEED_OPTIONS.length - 1) setTimeScale(SPEED_OPTIONS[i + 1]);
+                setIsPlaying(true);
+              }}
+            >
+              <Plus size={14} />
+            </button>
           </div>
         </div>
 
