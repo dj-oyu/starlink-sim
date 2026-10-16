@@ -172,6 +172,7 @@ export function Canvas({
     };
     setCtxState(state);
     threeHandleRef.current = state;
+    (window as any).__three = state; // diagnostics (console use only)
 
     const handleResize = () => {
       if (!container) return;

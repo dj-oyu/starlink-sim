@@ -269,7 +269,7 @@ export function ConstellationView({
   showTrails = true,
   onFrameStats,
 }: ConstellationViewProps) {
-  const { scene, camera, controls } = useThree();
+  const { scene, camera, controls, renderer } = useThree();
   const sunDirectionRef = useRef<[number, number, number]>([1, 0, 0]);
 
   const commLinesGeomRef = useRef<THREE.BufferGeometry | null>(null);
@@ -515,6 +515,21 @@ export function ConstellationView({
 
     group.add(obsGroup);
     obsGroupRef.current = obsGroup;
+
+    // Pre-compile every material now, including objects that are hidden until first use (the
+    // selection marker, orbit lines): otherwise the first selection compiles shaders and uploads
+    // geometry in the middle of a frame (a ~300 ms hitch on an iPhone). `compileAsync` uses
+    // parallel shader compilation where available; visibility is restored right away because the
+    // set of materials is collected synchronously.
+    {
+      const prev: [THREE.Object3D, boolean][] = [];
+      group.traverse((o) => {
+        prev.push([o, o.visible]);
+        o.visible = true;
+      });
+      void renderer.compileAsync(scene, camera).catch(() => {});
+      for (const [o, v] of prev) o.visible = v;
+    }
 
     return () => {
       scene.remove(group);
