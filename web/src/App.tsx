@@ -16,6 +16,12 @@ import {
   PerfMonitorPanel,
   PerfListener,
 } from './components/PerfMonitorPanel';
+import {
+  AUTO_CHECK_EVERY_MS,
+  autoRefreshDue,
+  fetchLatestTle,
+  loadCachedTle,
+} from './wasm/tleRefresh';
 import './styles.css';
 
 interface CityPreset {
@@ -314,6 +320,10 @@ export function App() {
     sim
       .init()
       .then(() => {
+        // Prefer a recent live TLE cached from a previous session (avoids
+        // re-downloading on every reload; CelesTrak rate-limits repeats).
+        const cached = loadCachedTle();
+        if (cached) sim.loadTleDataset(cached);
         const now = Date.now();
         simTimeMsRef.current = now;
         anchorTimeMsRef.current = now;
@@ -466,23 +476,43 @@ export function App() {
     }
   };
 
+  const applyLiveTle = (text: string): number => {
+    if (!engine) return 0;
+    const count = engine.loadTleDataset(text);
+    setSelectedSatIndex(null);
+    setSatVersion((v) => v + 1);
+    return count;
+  };
+
   const handleFetchLatestCelestrak = async () => {
     if (!engine) return;
     setTleStatusMsg('Fetching latest Starlink TLEs from CelesTrak...');
-    try {
-      const res = await fetch(
-        'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle',
-      );
-      const text = await res.text();
-      const count = engine.loadTleDataset(text);
-      setSatVersion((v) => v + 1);
-      setTleStatusMsg(
-        `Updated! Loaded ${count.toLocaleString()} live Starlink satellites from CelesTrak.`,
-      );
-    } catch (e: any) {
-      setTleStatusMsg(`Fetch failed (offline or CORS): ${e.message}`);
+    const r = await fetchLatestTle();
+    if (!r.ok) {
+      setTleStatusMsg(r.message);
+      return;
     }
+    const count = applyLiveTle(r.text);
+    setTleStatusMsg(
+      `Updated! Loaded ${count.toLocaleString()} live Starlink satellites from CelesTrak.`,
+    );
   };
+
+  // Periodic refresh: keeps the elements from going stale while the app stays open.
+  useEffect(() => {
+    if (!engine) return;
+    const tick = async () => {
+      if (!autoRefreshDue()) return;
+      const r = await fetchLatestTle();
+      if (r.ok) {
+        const count = applyLiveTle(r.text);
+        setTleStatusMsg(`Auto-refreshed TLEs (${count.toLocaleString()} satellites).`);
+      }
+    };
+    tick();
+    const id = setInterval(tick, AUTO_CHECK_EVERY_MS);
+    return () => clearInterval(id);
+  }, [engine]);
 
   if (!engine) {
     return (

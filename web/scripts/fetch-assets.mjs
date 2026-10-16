@@ -28,6 +28,11 @@ const textureUrl = (name) =>
 const TLE_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=3le';
 
 const exists = (p) => stat(p).then((s) => s.size > 0, () => false);
+const ageMs = (p) => stat(p).then((s) => Date.now() - s.mtimeMs, () => Infinity);
+
+// Starlink TLEs go stale within days; refresh on dev/build when older than this.
+// (CelesTrak rate-limits repeats, so keep this well above its 2 h minimum.)
+const TLE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 async function download(url) {
   const res = await fetch(url, { headers: { 'user-agent': 'starlink-sim-fetch-assets' } });
@@ -69,7 +74,7 @@ async function fetchTextures() {
 async function fetchTle() {
   const dest = join(root, 'data', 'starlink.tle');
   const have = await exists(dest);
-  if (!force && have) return;
+  if (!force && have && (await ageMs(dest)) < TLE_MAX_AGE_MS) return;
   try {
     const text = (await download(TLE_URL)).toString('utf8');
     if (!looksLikeTle(text)) throw new Error(`unexpected response: ${text.slice(0, 120).trim()}`);
