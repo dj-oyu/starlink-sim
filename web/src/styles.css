@@ -41,11 +41,8 @@
 
 /* Top Bar */
 .top-bar {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  z-index: 10;
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -158,12 +155,9 @@
 
 /* Left Sidebar */
 .left-sidebar {
-  position: absolute;
-  top: 74px;
-  left: 12px;
-  bottom: 92px;
   width: 320px;
-  z-index: 10;
+  flex-shrink: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -327,11 +321,8 @@
 
 /* Right Telemetry Card */
 .right-inspector {
-  position: absolute;
-  top: 74px;
-  right: 12px;
-  width: 310px;
-  z-index: 10;
+  width: 100%;
+  flex-shrink: 0;
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -361,11 +352,6 @@
 
 /* Bottom Time Control Bar */
 .bottom-timebar {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  right: 12px;
-  z-index: 10;
   padding: 10px 16px;
   display: flex;
   flex-direction: column;
@@ -441,4 +427,80 @@
   font-size: 11px;
   padding: 8px;
   resize: vertical;
+}
+
+/* HUD overlay: header / (left | right) / footer flow in one column so panels
+   never overlap when the header wraps. The overlay itself lets pointer events
+   through to the globe; only the panels capture them. */
+.hud-root {
+  position: absolute;
+  inset: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.hud-root > *,
+.hud-middle > *,
+.right-column > * {
+  pointer-events: auto;
+}
+
+.hud-middle {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.hud-middle > .left-sidebar {
+  align-self: stretch;
+}
+
+.right-column {
+  width: 320px;
+  max-height: 100%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+/* Display popover */
+.menu-anchor {
+  position: relative;
+}
+
+.menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 250px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-glass-strong);
+}
+
+.segmented {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.menu-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
 }

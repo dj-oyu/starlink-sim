@@ -220,11 +220,8 @@ export function PerfMonitorPanel({
     <div
       className="hud-panel"
       style={{
-        position: 'absolute',
-        top: '74px',
-        right: '12px',
-        width: '320px',
-        zIndex: 15,
+        width: '100%',
+        flexShrink: 0,
         padding: '13px 14px',
         display: 'flex',
         flexDirection: 'column',

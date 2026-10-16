@@ -276,7 +276,18 @@ export function App() {
 
   // Live Frame Telemetry & Performance Profiler (Direct subscription, zero VNode churn)
   const lastDatetimeMinRef = useRef(-1);
-  const [showPerfPanel, setShowPerfPanel] = useState(true);
+  const [showPerfPanel, setShowPerfPanel] = useState(false);
+  const [showDisplayMenu, setShowDisplayMenu] = useState(false);
+  useEffect(() => {
+    if (!showDisplayMenu) return;
+    const close = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest('.menu-anchor')) {
+        setShowDisplayMenu(false);
+      }
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [showDisplayMenu]);
   const latestPerfRef = useRef<FullPerfSnapshot>({
     fps: 60,
     minFps: 60,
@@ -568,6 +579,7 @@ export function App() {
         </Canvas>
       </div>
 
+      <div className="hud-root">
       {/* TOP TELEMETRY & VISUAL MODE BAR */}
       <header className="hud-panel top-bar">
         <div className="brand-block">
@@ -605,47 +617,63 @@ export function App() {
         </div>
 
         <div className="top-actions">
-          <button
-            className={`btn ${visualSettings.mode === 'photoreal' ? 'active' : ''}`}
-            onClick={() =>
-              setVisualSettings((s) => ({ ...s, mode: 'photoreal' }))
-            }
-          >
-            🌍 4K Photoreal
-          </button>
-          <button
-            className={`btn ${visualSettings.mode === 'hybrid' ? 'active' : ''}`}
-            onClick={() => setVisualSettings((s) => ({ ...s, mode: 'hybrid' }))}
-          >
-            🗺️ Hybrid Vector
-          </button>
-          <button
-            className={`btn ${visualSettings.mode === 'tactical' ? 'active' : ''}`}
-            onClick={() =>
-              setVisualSettings((s) => ({ ...s, mode: 'tactical' }))
-            }
-          >
-            💠 Tactical Grid
-          </button>
-          <button
-            className={`btn ${visualSettings.showClouds ? 'active' : ''}`}
-            onClick={() =>
-              setVisualSettings((s) => ({ ...s, showClouds: !s.showClouds }))
-            }
-          >
-            ☁️ Clouds
-          </button>
-          <button
-            className={`btn ${visualSettings.dayNightShading ? 'active' : ''}`}
-            onClick={() =>
-              setVisualSettings((s) => ({
-                ...s,
-                dayNightShading: !s.dayNightShading,
-              }))
-            }
-          >
-            ☀️ Day/Night
-          </button>
+          <div className="menu-anchor">
+            <button
+              className={`btn ${showDisplayMenu ? 'active' : ''}`}
+              onClick={() => setShowDisplayMenu((v) => !v)}
+              aria-expanded={showDisplayMenu}
+            >
+              🎛️ Display ▾
+            </button>
+            {showDisplayMenu && (
+              <div className="hud-panel menu-popover">
+                <span className="field-label">表示モード</span>
+                <div className="segmented">
+                  {(
+                    [
+                      ['photoreal', '4K Photoreal'],
+                      ['hybrid', 'Hybrid Vector'],
+                      ['tactical', 'Tactical Grid'],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      className={`btn ${visualSettings.mode === mode ? 'active' : ''}`}
+                      onClick={() => setVisualSettings((s) => ({ ...s, mode }))}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label className="menu-check">
+                  <input
+                    type="checkbox"
+                    checked={visualSettings.showClouds}
+                    onChange={() =>
+                      setVisualSettings((s) => ({
+                        ...s,
+                        showClouds: !s.showClouds,
+                      }))
+                    }
+                  />
+                  雲 (Clouds)
+                </label>
+                <label className="menu-check">
+                  <input
+                    type="checkbox"
+                    checked={visualSettings.dayNightShading}
+                    onChange={() =>
+                      setVisualSettings((s) => ({
+                        ...s,
+                        dayNightShading: !s.dayNightShading,
+                      }))
+                    }
+                  />
+                  昼夜の陰影 (Day/Night)
+                </label>
+              </div>
+            )}
+          </div>
           <button
             className={`btn ${showPerfPanel ? 'active-emerald' : ''}`}
             onClick={() => setShowPerfPanel((p) => !p)}
@@ -658,16 +686,7 @@ export function App() {
         </div>
       </header>
 
-      {/* PERFORMANCE PROFILER PANEL */}
-      {showPerfPanel && (
-        <PerfMonitorPanel
-          latestPerfRef={latestPerfRef}
-          subscribePerf={subscribePerf}
-          satCount={engine.count}
-          onClose={() => setShowPerfPanel(false)}
-        />
-      )}
-
+      <div className="hud-middle">
       {/* LEFT SIDEBAR: GROUND STATION, SHELL FILTERS & SEARCH */}
       <aside className="left-sidebar">
         {/* Ground Station Section */}
@@ -884,11 +903,21 @@ export function App() {
         </section>
       </aside>
 
+      <div className="right-column">
+      {/* PERFORMANCE PROFILER PANEL */}
+      {showPerfPanel && (
+        <PerfMonitorPanel
+          latestPerfRef={latestPerfRef}
+          subscribePerf={subscribePerf}
+          satCount={engine.count}
+          onClose={() => setShowPerfPanel(false)}
+        />
+      )}
+
       {/* RIGHT INSPECTOR PANEL (SELECTED SATELLITE TELEMETRY) */}
       {selectedTelemetry && (
         <aside
           className="hud-panel right-inspector"
-          style={{ top: showPerfPanel ? '430px' : '74px' }}
         >
           <div
             style={{
@@ -1001,6 +1030,8 @@ export function App() {
           </div>
         </aside>
       )}
+      </div>
+      </div>
 
       {/* BOTTOM TIME-TRAVEL CONTROL BAR */}
       <footer className="hud-panel bottom-timebar">
@@ -1103,6 +1134,7 @@ export function App() {
           />
         </div>
       </footer>
+      </div>
 
       {/* TLE DATASET MODAL */}
       {showTleModal && (
