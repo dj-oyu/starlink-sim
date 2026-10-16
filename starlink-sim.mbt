@@ -268,9 +268,26 @@ fn propagate_slice_impl(
   let inv_r = 1.0 / earth_radius_km
   let mut valid_count = 0
   let mut vis_count = 0
+  let lo = n * slice / slice_count
   let hi = n * (slice + 1) / slice_count
+  if slice_count > 1 {
+    // Incremental update: forget this slice's previous visible entries (they are re-added
+    // below if still visible) instead of rescanning every satellite's status.
+    let len = visible_indices.length()
+    let mut w = 0
+    let mut r = 0
+    while r < len {
+      let idx = visible_indices[r]
+      if idx < lo || idx >= hi {
+        visible_indices[w] = idx
+        w = w + 1
+      }
+      r = r + 1
+    }
+    visible_indices.truncate(w)
+  }
 
-  let mut i = n * slice / slice_count
+  let mut i = lo
   while i < hi {
     let sat = satellites.unsafe_get(i)
     let shell_bits = sat.shell_id & 7
@@ -330,9 +347,7 @@ fn propagate_slice_impl(
           let range_sq = dx * dx + dy * dy + dz * dz
           if top_z * top_z >= range_sq * min_sin_el_sq {
             status = status | 16
-            if slice_count == 1 {
-              visible_indices.push(i)
-            }
+            visible_indices.push(i)
             vis_count = vis_count + 1
           }
         }
@@ -344,16 +359,6 @@ fn propagate_slice_impl(
     i = i + 1
   }
   if slice_count > 1 {
-    // Only part of the constellation was refreshed: rebuild the visible list from the
-    // status bits so it reflects every satellite's latest state.
-    visible_indices.clear()
-    let mut k = 0
-    while k < n {
-      if (sat_status.unsafe_get(k) & 16) != 0 {
-        visible_indices.push(k)
-      }
-      k = k + 1
-    }
     vis_count = visible_indices.length()
   }
   sim_state.visible_count = vis_count

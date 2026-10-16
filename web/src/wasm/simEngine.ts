@@ -108,13 +108,17 @@ const JUMP_MS = 60000; // sim-time step treated as a seek (forces a full pass)
 // --- GPU mode (`?gpu=1`) ---------------------------------------------------------------
 // wasm refreshes per-satellite "anchors" (exact SGP4 state) at a low rate; the GPU rotates each
 // satellite along its orbit from its anchor to the current time (see ConstellationView shaders).
-const GPU_ENABLED = (() => {
+// `?gpu=1` forces the GPU path on, `?gpu=0` off; otherwise it is chosen automatically at startup
+// from the measured cost of a full wasm pass (see StarlinkSimEngine.init).
+const GPU_PARAM: boolean | null = (() => {
   try {
-    return new URLSearchParams(location.search).get('gpu') === '1';
+    const v = new URLSearchParams(location.search).get('gpu');
+    return v === '1' ? true : v === '0' ? false : null;
   } catch {
-    return false;
+    return null;
   }
 })();
+const GPU_AUTO_THRESHOLD_MS = 4; // a full pass slower than this -> use the GPU path
 const GPU_BUDGET_MS = 1.5; // target wasm time per frame in GPU mode
 const GPU_MAX_SLICES = 64;
 // Anchor refresh cycle (sim seconds): the CPU-side features (visible list, sky plot, picking)
@@ -248,7 +252,9 @@ export class StarlinkSimEngine {
     return this.fullPassMsEma;
   }
   // --- GPU mode state ---
-  public readonly gpuMode = GPU_ENABLED;
+  public gpuMode = GPU_PARAM === true;
+  /** Full-pass time measured at startup for the automatic path choice (ms); null if forced by URL. */
+  public fullPassCalibrationMs: number | null = null;
   /** Per-satellite anchors for the GPU: x y z (km) vx vy vz (km/s) in TEME, 6 floats each. */
   public anchorPV: Float32Array = new Float32Array(0);
   /** Anchor times in seconds since `anchorBaseMs` (float32; re-based to stay small). */
@@ -274,6 +280,38 @@ export class StarlinkSimEngine {
   public wasmReadoutMs = 0;
   public wasmMemoryBytes = 0;
 
+  /** Allocate the GPU-path anchor buffers (wasm side and the JS arrays the GPU attributes use). */
+  private setupGpuBuffers(total: number): void {
+    this.api.prepare_anchor_buffers();
+    this.anchorPvPtr = this.api.get_anchor_pv_ptr();
+    this.anchorTPtr = this.api.get_anchor_t_ptr();
+    // Keep the same typed arrays when the count is unchanged (GPU attributes reference them)
+    if (this.anchorPV.length !== total * 6) {
+      this.anchorPV = new Float32Array(total * 6);
+      this.anchorT = new Float32Array(total);
+    } else {
+      this.anchorPV.fill(0);
+      this.anchorT.fill(0);
+    }
+    this.anchorBaseMs = NaN;
+    this.anchorPvView = new Float32Array(0);
+    this.anchorTView = new Float32Array(0);
+  }
+
+  /** Median wall time (ms) of a full pass over the constellation, after one warm-up pass. */
+  private measureFullPassMs(): number {
+    const t = Date.now();
+    this.api.propagate_constellation(t);
+    const ms: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const s = performance.now();
+      this.api.propagate_constellation(t + (i + 1) * 16);
+      ms.push(performance.now() - s);
+    }
+    ms.sort((a, b) => a - b);
+    return ms[1];
+  }
+
   async init(): Promise<void> {
     const [wasmRes, tleRes] = await Promise.all([
       fetch('/assets/wasm/starlink-sim.wasm'),
@@ -285,6 +323,18 @@ export class StarlinkSimEngine {
 
     const tleText = await tleRes.text();
     this.loadTleDataset(tleText);
+
+    // Pick the position path: slow engines (e.g. iOS Safari runs this wasm ~20x slower) use the
+    // GPU path. One-time cost: 4 full passes (~1 ms each on desktop, ~70 ms on the phone).
+    if (GPU_PARAM === null && this.count > 0) {
+      this.fullPassCalibrationMs = this.measureFullPassMs();
+      if (this.fullPassCalibrationMs > GPU_AUTO_THRESHOLD_MS) {
+        this.gpuMode = true;
+        this.setupGpuBuffers(this.count);
+      }
+    }
+    // Calibration propagated at "now"; make the first real frame a consistent full pass again
+    this.forceFullPass = true;
   }
 
   getSatName(idx: number): string {
@@ -434,22 +484,7 @@ export class StarlinkSimEngine {
     // Render-ready positions live in wasm memory; JS bulk-copies them each frame
     // (instead of 3 JS->wasm calls per satellite, which is very slow on Safari/JSC).
     this.forceFullPass = true; // new satellites: make everything consistent first
-    if (this.gpuMode) {
-      this.api.prepare_anchor_buffers();
-      this.anchorPvPtr = this.api.get_anchor_pv_ptr();
-      this.anchorTPtr = this.api.get_anchor_t_ptr();
-      // Keep the same typed arrays when the count is unchanged (GPU attributes reference them)
-      if (this.anchorPV.length !== total * 6) {
-        this.anchorPV = new Float32Array(total * 6);
-        this.anchorT = new Float32Array(total);
-      } else {
-        this.anchorPV.fill(0);
-        this.anchorT.fill(0);
-      }
-      this.anchorBaseMs = NaN;
-      this.anchorPvView = new Float32Array(0);
-      this.anchorTView = new Float32Array(0);
-    }
+    if (this.gpuMode) this.setupGpuBuffers(total);
     this.renderFloats = this.api.prepare_render_buffer();
     this.renderPtr = this.api.get_render_buffer_ptr();
     this.renderView = new Float32Array(0);

@@ -320,6 +320,8 @@ export function App() {
     wasmPureSgp4Ms: 0,
     wasmSlices: 1,
     wasmFullPassMs: 0,
+    gpuPath: false,
+    calibrationMs: 0,
     wasmReadoutMs: 0,
     threeBufferSyncMs: 0,
     wasmMemoryBytes: 0,
@@ -357,6 +359,7 @@ export function App() {
         const now = Date.now();
         simTimeMsRef.current = now;
         anchorTimeMsRef.current = now;
+        (window as any).__starlinkEngine = sim; // diagnostics (read-only use from the console)
         setEngine(sim);
       })
       .catch((err) => {

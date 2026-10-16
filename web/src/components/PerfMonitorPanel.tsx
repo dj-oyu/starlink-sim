@@ -213,7 +213,8 @@ export function PerfMonitorPanel({
       cpuWorkBreakdownMs: {
         totalActiveMs: Number(totalCpuWorkMs.toFixed(2)),
         moonbitWasmSgp4PureMs: Number(perf.wasmPureSgp4Ms.toFixed(2)),
-        gpuPositionPath: new URLSearchParams(location.search).get('gpu') === '1',
+        gpuPositionPath: perf.gpuPath,
+        startupFullPassCalibrationMs: Number(perf.calibrationMs.toFixed(1)),
         wasmSlicesPerFrame: perf.wasmSlices,
         wasmFullPassEstimateMs: Number(perf.wasmFullPassMs.toFixed(2)),
         wasmToJsReadoutMs: Number(perf.wasmReadoutMs.toFixed(2)),

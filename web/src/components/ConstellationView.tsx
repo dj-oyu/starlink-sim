@@ -14,6 +14,8 @@ export interface FullPerfSnapshot extends RenderPerfStats {
   wasmPureSgp4Ms: number;
   wasmSlices: number;
   wasmFullPassMs: number;
+  gpuPath: boolean;
+  calibrationMs: number;
   wasmReadoutMs: number;
   threeBufferSyncMs: number;
   wasmMemoryBytes: number;
@@ -284,6 +286,13 @@ export function ConstellationView({
   const trailStateRef = useRef({ prevSimMs: NaN });
   const gpuFrameRef = useRef({ t: 0, cosG: 1, sinG: 0 });
   const gpuRevRef = useRef(-1);
+  const styleCtxRef = useRef<{
+    shellMask: number;
+    search: Set<number> | null | undefined;
+    selected: number | null | undefined;
+    obs: boolean | undefined;
+    count: number;
+  }>({ shellMask: -1, search: undefined, selected: undefined, obs: undefined, count: -1 });
 
   const {
     posAttr,
@@ -595,6 +604,8 @@ export function ConstellationView({
     wasmPureSgp4Ms: 0,
     wasmSlices: 1,
     wasmFullPassMs: 0,
+    gpuPath: false,
+    calibrationMs: 0,
     wasmReadoutMs: 0,
     threeBufferSyncMs: 0,
     wasmMemoryBytes: 0,
@@ -761,11 +772,6 @@ export function ConstellationView({
     const satStatusU32 = engine.satStatusU32;
     const quadLen = satStatusU32.length;
 
-    // Read 4 satellite status bytes per call (2,663 calls instead of 21,304 calls)
-    for (let q = 0; q < quadLen; q++) {
-      satStatusU32[q] = api.get_sat_status_quad(q << 2);
-    }
-
     const dstPos = posAttr.array as Float32Array;
     dstPos.set(engine.getRenderPositions()); // one memcpy instead of 3 wasm calls per satellite
     const dstStyle = styleAttr.array as Float32Array;
@@ -780,7 +786,36 @@ export function ConstellationView({
     let styleDirty = false;
     let activeVisCount = 0;
 
-    for (let i = 0; i < satCount; i++) {
+    // GPU mode refreshes only a slice of the satellites per frame and a satellite's status only
+    // changes when its slice is refreshed, so style work can be limited to that range. Anything
+    // that changes how styles are derived (shell filter, search, selection, observer) re-styles
+    // every satellite once.
+    const sc = styleCtxRef.current;
+    const ctxChanged =
+      sc.shellMask !== shellMask ||
+      sc.search !== searchMatchIndices ||
+      sc.selected !== selectedSatIndex ||
+      sc.obs !== obsEnabled ||
+      sc.count !== satCount;
+    if (ctxChanged) {
+      sc.shellMask = shellMask;
+      sc.search = searchMatchIndices;
+      sc.selected = selectedSatIndex;
+      sc.obs = obsEnabled;
+      sc.count = satCount;
+    }
+    const partial = gpuB !== null && !ctxChanged;
+    const rangeLo = partial ? Math.min(engine.anchorLo, satCount) : 0;
+    const rangeHi = partial ? Math.min(engine.anchorHi, satCount) : satCount;
+
+    // Read 4 satellite status bytes per call (only the quads covering the range)
+    const qLo = partial ? rangeLo >> 2 : 0;
+    const qHi = partial ? Math.min(quadLen, ((rangeHi + 3) >> 2) + 1) : quadLen;
+    for (let q = qLo; q < qHi; q++) {
+      satStatusU32[q] = api.get_sat_status_quad(q << 2);
+    }
+
+    for (let i = rangeLo; i < rangeHi; i++) {
       const st = satStatus[i];
       const shId = st & 7;
       const ok = (st & 8) !== 0;
@@ -828,6 +863,16 @@ export function ConstellationView({
       }
     }
 
+    if (gpuB) {
+      // Count shown, visible satellites from the (short) visible list instead of the full loop
+      activeVisCount = 0;
+      if (obsEnabled) {
+        const vl = api.get_visible_count();
+        for (let k = 0; k < vl; k++) {
+          if (dstStyle[api.get_visible_sat_index(k)] >= 0) activeVisCount++;
+        }
+      }
+    }
     engine.visibleCount = activeVisCount;
     if (!gpuB) posAttr.needsUpdate = true; // GPU mode never uploads CPU positions
 
@@ -1051,6 +1096,8 @@ export function ConstellationView({
       snap.wasmPureSgp4Ms = engine.wasmPureSgp4Ms;
       snap.wasmSlices = engine.wasmSlices;
       snap.wasmFullPassMs = engine.wasmFullPassMs;
+      snap.gpuPath = engine.gpuMode;
+      snap.calibrationMs = engine.fullPassCalibrationMs ?? 0;
       snap.wasmReadoutMs = engine.wasmReadoutMs;
       snap.threeBufferSyncMs = threeBufferSyncMs;
       snap.wasmMemoryBytes = engine.wasmMemoryBytes;
