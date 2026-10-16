@@ -18,6 +18,7 @@
   <script type="module">
     const out = document.getElementById('out');
     const log = (s) => { out.textContent += '\n' + s; };
+    const NL = String.fromCharCode(10);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const med = (a) => { const b = [...a].sort((x, y) => x - y); return b[b.length >> 1]; };
 
@@ -90,6 +91,27 @@
           bulk.push(performance.now() - s);
         }
         res.bulkCopyMedianMs = +med(bulk).toFixed(3);
+      }
+      // 5) compare older wasm builds on THIS device (which build suits this engine best?)
+      res.variants = {};
+      const names = ['v1-initial', 'v2-sgp4-4.8x', 'v3-before-tuplefix', 'v4-tuplefix', 'v5-agent-opt'];
+      for (const name of names) {
+        out.textContent = 'variant ' + name + '...';
+        try {
+          const buf = await fetch('/bench-wasm/' + name + '.wasm').then((r) => r.arrayBuffer());
+          const { instance: inst } = await WebAssembly.instantiate(buf, {});
+          const b = inst.exports; let l1b = null;
+          for (const l of tle.split(NL)) {
+            if (l.startsWith('1 ') && l.length >= 61) l1b = l;
+            else if (l.startsWith('2 ') && l1b) {
+              b.add_satellite_elements(parseInt(l1b.slice(2, 7)), parseInt(l1b.slice(18, 20)), parseFloat(l1b.slice(20, 32)), exp(l1b.slice(53, 61)), parseFloat(l.slice(8, 16)), parseFloat(l.slice(17, 25)), parseInt(l.slice(26, 33)) * 1e-7, parseFloat(l.slice(34, 42)), parseFloat(l.slice(43, 51)), parseFloat(l.slice(52, 63)));
+              l1b = null;
+            }
+          }
+          let tt = Date.now(); const ms = [];
+          for (let i = 0; i < 80; i++) { const s0 = performance.now(); b.propagate_constellation((tt += 16)); ms.push(performance.now() - s0); await sleep(5); }
+          res.variants[name] = +med(ms.slice(20)).toFixed(2);
+        } catch (e) { res.variants[name] = 'ERR ' + e.message; }
       }
       out.textContent = JSON.stringify(res, null, 2);
     }
