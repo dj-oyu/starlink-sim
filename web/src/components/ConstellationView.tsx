@@ -33,6 +33,7 @@ interface ConstellationViewProps {
   visualSettings: EarthVisualSettings;
   pointsRef: { current: THREE.Points | null };
   earthMeshRef: { current: THREE.Mesh | null };
+  viewCommandsRef?: { current: ViewCommands | null };
   onFrameStats: (
     simTimeMs: number,
     visibleCount: number,
@@ -41,12 +42,19 @@ interface ConstellationViewProps {
   ) => void;
 }
 
+/** Camera operations exposed to the HUD (map-style zoom / home / focus buttons). */
+export interface ViewCommands {
+  zoom: (factor: number) => void;
+  resetView: () => void;
+  focusGroundStation: () => void;
+}
+
 /**
  * GPU Vertex Shader with built-in SIMT palette lookup:
  * Instead of uploading 3x Float32 RGB colors (128 KB) + 1x Float32 size (42 KB) from CPU,
  * CPU passes a single packed float `aStyle`:
  *  -1.0       : Hidden / Filtered out
- *   0.0 .. 4.0: Orbital Shell 0..4 normal (size 2.8)
+ *   0.0 .. 4.0: Orbital Shell 0..4 normal (size 2.4, dimmed)
  *  10.0 ..14.0: Orbital Shell 0..4 search-highlighted (size 4.8)
  *  16.0       : In Ground Station Dish FOV (Emerald, size 5.4)
  *  24.0       : Selected Satellite (Gold, size 8.5)
@@ -54,6 +62,7 @@ interface ConstellationViewProps {
 const SAT_POINTS_VERT = /* glsl */ `
   attribute float aStyle;
   varying vec3 vColor;
+  varying float vIntensity;
 
   vec3 getShellColor(float s) {
     if (s < 0.5) return vec3(0.22, 0.74, 0.97);
@@ -71,16 +80,22 @@ const SAT_POINTS_VERT = /* glsl */ `
       return;
     }
 
-    float baseSize = 2.8;
+    // Background constellation is deliberately small and dim so that only the
+    // satellites that matter (in dish FOV, search hits, selection) stand out.
+    float baseSize = 2.4;
+    vIntensity = 0.75;
     if (aStyle > 20.0) {
       vColor = vec3(1.0, 0.92, 0.25);
       baseSize = 8.5;
+      vIntensity = 1.0;
     } else if (aStyle > 15.0) {
       vColor = vec3(0.15, 1.0, 0.55);
       baseSize = 5.4;
+      vIntensity = 1.0;
     } else if (aStyle >= 9.5) {
       vColor = getShellColor(aStyle - 10.0);
       baseSize = 4.8;
+      vIntensity = 1.0;
     } else {
       vColor = getShellColor(aStyle);
     }
@@ -94,6 +109,7 @@ const SAT_POINTS_VERT = /* glsl */ `
 
 const SAT_POINTS_FRAG = /* glsl */ `
   varying vec3 vColor;
+  varying float vIntensity;
 
   void main() {
     vec2 uv = gl_PointCoord * 2.0 - 1.0;
@@ -102,7 +118,7 @@ const SAT_POINTS_FRAG = /* glsl */ `
     float core = exp(-r2 * 4.2);
     float halo = pow(1.0 - r2, 1.8) * 0.65;
     vec3 col = vColor * (0.75 + 0.65 * core);
-    gl_FragColor = vec4(col, core + halo);
+    gl_FragColor = vec4(col, (core + halo) * vIntensity);
   }
 `;
 
@@ -124,6 +140,7 @@ export function ConstellationView({
   visualSettings,
   pointsRef,
   earthMeshRef,
+  viewCommandsRef,
   onFrameStats,
 }: ConstellationViewProps) {
   const { scene, camera, controls } = useThree();
@@ -367,6 +384,35 @@ export function ConstellationView({
     gt: false,
   });
   const prevSelectedPosRef = useRef<THREE.Vector3 | null>(null);
+
+  useEffect(() => {
+    if (!viewCommandsRef) return;
+    const offset = new THREE.Vector3();
+    viewCommandsRef.current = {
+      zoom: (factor) => {
+        offset.copy(camera.position).sub(controls.target);
+        const len = Math.min(
+          controls.maxDistance,
+          Math.max(controls.minDistance, offset.length() * factor),
+        );
+        offset.setLength(len);
+        camera.position.copy(controls.target).add(offset);
+      },
+      resetView: () => {
+        camera.position.set(0, 0.85, 2.55);
+        if (!followSelected) controls.target.set(0, 0, 0);
+      },
+      focusGroundStation: () => {
+        offset.set(obsThreePos[0], obsThreePos[1], obsThreePos[2]);
+        if (offset.lengthSq() < 1e-9) return;
+        controls.target.set(0, 0, 0);
+        camera.position.copy(offset.setLength(2.1));
+      },
+    };
+    return () => {
+      viewCommandsRef.current = null;
+    };
+  }, [viewCommandsRef, camera, controls, obsThreePos, followSelected]);
 
   useEffect(() => {
     if (!followSelected) {

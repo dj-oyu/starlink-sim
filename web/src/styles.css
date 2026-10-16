@@ -449,6 +449,7 @@
 }
 
 .hud-middle {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -464,7 +465,7 @@
 
 .right-column {
   width: 320px;
-  max-height: 100%;
+  max-height: calc(100% - 200px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -503,4 +504,137 @@
   gap: 8px;
   font-size: 12px;
   cursor: pointer;
+}
+
+/* Search card (map-style) */
+.search-card {
+  position: relative;
+  z-index: 6;
+  flex-shrink: 0;
+  padding: 6px 10px;
+}
+
+.search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text-main);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.search-input::placeholder {
+  color: #64748b;
+}
+
+.search-card:focus-within {
+  border-color: var(--border-bright);
+}
+
+.search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-glass-strong);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+}
+
+.icon-btn:hover {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text-main);
+}
+
+/* Map-style floating controls (bottom-right of the viewport) */
+.map-controls {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.fab {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-glass-strong);
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  color: var(--text-main);
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  transition: all 0.15s ease;
+}
+
+.fab:hover:not(:disabled) {
+  border-color: var(--border-bright);
+  color: #7dd3fc;
+}
+
+.fab.on {
+  background: rgba(14, 165, 233, 0.3);
+  border-color: var(--accent-cyan);
+  color: #7dd3fc;
+}
+
+.fab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Zoom pair shares one pill, like map zoom controls */
+.fab-group {
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.fab-group .fab {
+  box-shadow: none;
+}
+
+.fab-group .fab:first-child {
+  border-radius: 20px 20px 0 0;
+  border-bottom-color: transparent;
+}
+
+.fab-group .fab:last-child {
+  border-radius: 0 0 20px 20px;
 }

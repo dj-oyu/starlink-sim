@@ -10,6 +10,7 @@ import {
 import {
   ConstellationView,
   FullPerfSnapshot,
+  ViewCommands,
 } from './components/ConstellationView';
 import { EarthVisualSettings } from './components/EarthGlobe';
 import {
@@ -22,6 +23,15 @@ import {
   fetchLatestTle,
   loadCachedTle,
 } from './wasm/tleRefresh';
+import {
+  Crosshair,
+  House,
+  LocateFixed,
+  Minus,
+  Plus,
+  Search,
+  X,
+} from 'lucide-preact';
 import './styles.css';
 
 interface CityPreset {
@@ -222,6 +232,7 @@ export function App() {
   );
   const [satVersion, setSatVersion] = useState(0);
   const pointsRef = useRef<THREE.Points | null>(null);
+  const viewCommandsRef = useRef<ViewCommands | null>(null);
   const earthMeshRef = useRef<THREE.Mesh | null>(null);
 
   // Simulation Clock (updated via Direct DOM refs to avoid Preact VDOM re-renders)
@@ -573,6 +584,7 @@ export function App() {
             showCommLinks={showCommLinks}
             visualSettings={visualSettings}
             pointsRef={pointsRef}
+            viewCommandsRef={viewCommandsRef}
             earthMeshRef={earthMeshRef}
             onFrameStats={handleFrameStats}
           />
@@ -689,6 +701,53 @@ export function App() {
       <div className="hud-middle">
       {/* LEFT SIDEBAR: GROUND STATION, SHELL FILTERS & SEARCH */}
       <aside className="left-sidebar">
+        {/* Search (top of sidebar, map-style: results overlay below the input) */}
+        <section className="hud-panel search-card">
+          <div className="search-input-row">
+            <Search size={15} aria-hidden="true" />
+            <input
+              type="text"
+              className="search-input"
+              placeholder="衛星を検索 (例: STARLINK-1008 / 44714)"
+              aria-label="衛星を検索"
+              value={searchQuery}
+              onInput={(e) =>
+                setSearchQuery((e.target as HTMLInputElement).value)
+              }
+            />
+            {searchQuery && (
+              <button
+                className="icon-btn"
+                aria-label="検索をクリア"
+                onClick={() => setSearchQuery('')}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          {searchQuery && (
+            <div className="search-results">
+              {searchResultsList.map((m) => (
+                <div
+                  key={m.index}
+                  className={`sat-list-item ${selectedSatIndex === m.index ? 'selected' : ''}`}
+                  onClick={() => setSelectedSatIndex(m.index)}
+                >
+                  <span>{m.name}</span>
+                  <span style={{ fontFamily: 'monospace', color: '#94a3b8' }}>
+                    #{m.satnum} ({m.inclinationDeg.toFixed(1)}°)
+                  </span>
+                </div>
+              ))}
+              {searchResultsList.length === 0 && (
+                <div style={{ fontSize: '11px', color: '#64748b', padding: '6px 4px' }}>
+                  該当する衛星がありません。
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
         {/* Ground Station Section */}
         <section className="hud-panel panel-section">
           <div className="section-header">
@@ -858,49 +917,6 @@ export function App() {
             })}
           </div>
         </section>
-
-        {/* Satellite Search Section */}
-        <section className="hud-panel panel-section">
-          <div className="section-header">
-            <span>🔍 Search Satellite (衛星検索)</span>
-            {searchQuery && (
-              <button
-                className="chip"
-                onClick={() => setSearchQuery('')}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          <input
-            type="text"
-            className="input-text"
-            placeholder="e.g. STARLINK-1008 or NORAD 44714..."
-            value={searchQuery}
-            onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
-          />
-          {searchQuery && (
-            <div className="sat-list">
-              {searchResultsList.map((m) => (
-                <div
-                  key={m.index}
-                  className={`sat-list-item ${selectedSatIndex === m.index ? 'selected' : ''}`}
-                  onClick={() => setSelectedSatIndex(m.index)}
-                >
-                  <span>{m.name}</span>
-                  <span style={{ fontFamily: 'monospace', color: '#94a3b8' }}>
-                    #{m.satnum} ({m.inclinationDeg.toFixed(1)}°)
-                  </span>
-                </div>
-              ))}
-              {searchResultsList.length === 0 && (
-                <div style={{ fontSize: '11px', color: '#64748b' }}>
-                  No matching satellites found.
-                </div>
-              )}
-            </div>
-          )}
-        </section>
       </aside>
 
       <div className="right-column">
@@ -1030,6 +1046,58 @@ export function App() {
           </div>
         </aside>
       )}
+      </div>
+      <div className="map-controls" role="group" aria-label="カメラ操作">
+        <button
+          className={`fab ${followSelected ? 'on' : ''}`}
+          title={
+            selectedSatIndex === null
+              ? '選択衛星を追従 (衛星を選択してください)'
+              : '選択衛星を追従'
+          }
+          aria-label="選択衛星を追従"
+          aria-pressed={followSelected}
+          disabled={selectedSatIndex === null}
+          onClick={() => setFollowSelected((v) => !v)}
+        >
+          <LocateFixed size={18} />
+        </button>
+        {observer.enabled && (
+          <button
+            className="fab"
+            title="地上局へ視点を移動"
+            aria-label="地上局へ視点を移動"
+            onClick={() => viewCommandsRef.current?.focusGroundStation()}
+          >
+            <Crosshair size={18} />
+          </button>
+        )}
+        <button
+          className="fab"
+          title="視点をリセット"
+          aria-label="視点をリセット"
+          onClick={() => viewCommandsRef.current?.resetView()}
+        >
+          <House size={18} />
+        </button>
+        <div className="fab-group">
+          <button
+            className="fab"
+            title="拡大"
+            aria-label="拡大"
+            onClick={() => viewCommandsRef.current?.zoom(0.8)}
+          >
+            <Plus size={18} />
+          </button>
+          <button
+            className="fab"
+            title="縮小"
+            aria-label="縮小"
+            onClick={() => viewCommandsRef.current?.zoom(1.25)}
+          >
+            <Minus size={18} />
+          </button>
+        </div>
       </div>
       </div>
 
