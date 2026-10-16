@@ -6,6 +6,9 @@
   "type": "module",
   "scripts": {
     "build:wasm": "moon -C .. build --target wasm --release && node -e \"fs.copyFileSync('../_build/wasm/release/build/starlink-sim.wasm', 'public/assets/wasm/starlink-sim.wasm')\"",
+    "fetch:assets": "node scripts/fetch-assets.mjs",
+    "predev": "node scripts/fetch-assets.mjs",
+    "prebuild": "node scripts/fetch-assets.mjs",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && vite build",
     "preview": "vite preview"
