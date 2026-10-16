@@ -9,12 +9,21 @@ priv struct SinCosOut {
 let sc_out : SinCosOut = { s: 0.0, c: 0.0, }
 
 ///|
+/// Hardware round-to-nearest-even (`f64.nearest`), avoiding the software `Double::round`.
+extern "wasm" fn f64_nearest(x : Double) -> Double =
+  #|(func (param $d f64) (result f64) (f64.nearest (local.get $d)))
+
+///|
+/// Unchecked `i32.trunc_f64_s`; caller guarantees the value is a small finite integer.
+fn f64_to_i32_unchecked(x : Double) -> Int32 = "%f64_to_i32"
+
+///|
 /// Fused sin & cos written into `sc_out` (allocation-free).
 fn sincos_fast(x : Double) -> Unit {
   let inv_pio2 = 0.63661977236758134308
   let pio2_hi = 1.57079632679489655800
   let pio2_lo = 6.12323399573676603587e-17
-  let k = (x * inv_pio2).round()
+  let k = f64_nearest(x * inv_pio2)
   let r = x - k * pio2_hi - k * pio2_lo
   let r2 = r * r
   let sin_r = r +
@@ -62,7 +71,7 @@ fn sincos_fast(x : Double) -> Unit {
         )
       )
     )
-  let q = k.to_int() & 3
+  let q = f64_to_i32_unchecked(k) & 3
   if q == 0 {
     sc_out.s = sin_r
     sc_out.c = cos_r
@@ -92,10 +101,10 @@ pub fn sin_rad(x : Double) -> Double {
   let inv_pio2 = 0.63661977236758134308
   let pio2_hi = 1.57079632679489655800
   let pio2_lo = 6.12323399573676603587e-17
-  let k = (x * inv_pio2).round()
+  let k = f64_nearest(x * inv_pio2)
   let r = x - k * pio2_hi - k * pio2_lo
   let r2 = r * r
-  let q = k.to_int() & 3
+  let q = f64_to_i32_unchecked(k) & 3
   if (q & 1) == 0 {
     let s = r +
       r *

@@ -170,14 +170,29 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let min_sin_el_sq = min_sin_el * min_sin_el
   let obs_on = sim_state.obs_enabled
 
-  sim_state.visible_indices.clear()
-  let n = sim_state.satellites.length()
+  let visible_indices = sim_state.visible_indices
+  visible_indices.clear()
+  // Hoist the per-call invariant array handles out of the loop; all four
+  // output arrays are kept at exactly `satellites.length()` entries by
+  // `add_satellite_elements` / `reset_constellation`, so unchecked access is safe.
+  let satellites = sim_state.satellites
+  let ecef_x = sim_state.ecef_x
+  let ecef_y = sim_state.ecef_y
+  let ecef_z = sim_state.ecef_z
+  let sat_status = sim_state.sat_status
+  let n = satellites.length()
+  guard ecef_x.length() == n &&
+    ecef_y.length() == n &&
+    ecef_z.length() == n &&
+    sat_status.length() == n else {
+    return 0
+  }
   let mut valid_count = 0
   let mut vis_count = 0
 
   let mut i = 0
   while i < n {
-    let sat = sim_state.satellites[i]
+    let sat = satellites.unsafe_get(i)
     let shell_bits = sat.shell_id & 7
     let tsince = (jd - sat.jdsatepoch) * minutes_per_day
     let ok = sgp4_pos_into(sat, tsince)
@@ -188,9 +203,9 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
       let ex = cos_g * rx + sin_g * ry
       let ey = -sin_g * rx + cos_g * ry
       let ez = rz
-      sim_state.ecef_x[i] = ex
-      sim_state.ecef_y[i] = ey
-      sim_state.ecef_z[i] = ez
+      ecef_x.unsafe_set(i, ex)
+      ecef_y.unsafe_set(i, ey)
+      ecef_z.unsafe_set(i, ez)
       valid_count = valid_count + 1
 
       let mut status = shell_bits | 8
@@ -204,14 +219,14 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
           let range_sq = dx * dx + dy * dy + dz * dz
           if top_z * top_z >= range_sq * min_sin_el_sq {
             status = status | 16
-            sim_state.visible_indices.push(i)
+            visible_indices.push(i)
             vis_count = vis_count + 1
           }
         }
       }
-      sim_state.sat_status[i] = status
+      sat_status.unsafe_set(i, status)
     } else {
-      sim_state.sat_status[i] = shell_bits
+      sat_status.unsafe_set(i, shell_bits)
     }
     i = i + 1
   }

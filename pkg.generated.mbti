@@ -177,6 +177,15 @@ pub struct SatRec {
   nodecf : Double
   isimp : Bool
   shell_id : Int
+  mut memo_xmdf_ref : Double
+  mut memo_xmdf_s : Double
+  mut memo_xmdf_c : Double
+  mut memo_argp_ref : Double
+  mut memo_argp_s : Double
+  mut memo_argp_c : Double
+  mut memo_node_ref : Double
+  mut memo_node_s : Double
+  mut memo_node_c : Double
 }
 
 pub struct TleData {

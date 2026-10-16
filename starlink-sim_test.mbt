@@ -144,6 +144,102 @@ test "sun_direction_ecef is a unit vector" {
 }
 
 ///|
+/// Regression test for the fast position-only path (`sgp4_propagate_pos`):
+/// its memoized sin/cos, division-free near-circular short-period terms and
+/// fixed-step Kepler solve must agree with the exact `sgp4_propagate` to
+/// better than 1 mm over a synthetic Starlink-like constellation that spans
+/// every shell, e in [1e-4, 3e-3], bstar in [-2e-2, 5e-2] and TLE ages up to
+/// 26 days, evaluated both with arbitrary time jumps (+-24 h) and as a
+/// sequence of 16 ms frames (the memo rotation path).
+test "fast position path matches exact SGP4 over a synthetic Starlink constellation" {
+  let incs = [53.0, 53.2, 43.0, 70.0, 97.6, 33.0]
+  let alts = [340.0, 400.0, 480.0, 530.0, 550.0, 560.0, 575.0]
+  let eccs = [0.0001, 0.0003, 0.0007, 0.0015, 0.0033]
+  let bstars = [-0.02, 0.0001, 0.0005, 0.002, 0.01, 0.055]
+  let ages = [-0.5, 0.1, 1.0, 3.0, 8.0, 26.0]
+  let mut seed = 20261017
+  fn rnd() -> Double {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff
+    seed.to_double() / 2147483647.0
+  }
+
+  let sats : Array[@starlink-sim.SatRec] = []
+  let mut k = 0
+  while k < 420 {
+    let inc = incs[k % incs.length()]
+    let alt = alts[k / 6 % alts.length()]
+    let ecc = eccs[k / 42 % eccs.length()]
+    let bstar = bstars[k / 7 % bstars.length()]
+    let age = ages[k % ages.length()]
+    // mean motion (rev/day) for a circular orbit at `alt`
+    let a_km = 6378.135 + alt
+    let n_rad_s = (398600.8 / (a_km * a_km * a_km)).sqrt()
+    let no_rpd = n_rad_s * 86400.0 / (2.0 * 3.141592653589793)
+    let tle = @starlink-sim.TleData::from_elements(
+      k,
+      26,
+      290.0 - age,
+      bstar,
+      inc,
+      rnd() * 360.0,
+      ecc,
+      rnd() * 360.0,
+      rnd() * 360.0,
+      no_rpd,
+    )
+    sats.push(@starlink-sim.sgp4_init(tle))
+    k = k + 1
+  }
+  let mut max_err_km = 0.0
+  fn check(sat : @starlink-sim.SatRec, tsince : Double) -> Unit raise {
+    let (px, py, pz, pok) = @starlink-sim.sgp4_propagate_pos(sat, tsince)
+    let (rx, ry, rz, _, _, _, ok) = @starlink-sim.sgp4_propagate(sat, tsince)
+    assert_eq(pok, ok)
+    if ok {
+      let dx = px - rx
+      let dy = py - ry
+      let dz = pz - rz
+      let e = (dx * dx + dy * dy + dz * dz).sqrt()
+      if e > max_err_km {
+        max_err_km = e
+      }
+    }
+  }
+
+  // Epoch of the simulated "now": day 290.0 of 2026 -> tsince = age (days) * 1440
+  let mut i = 0
+  while i < sats.length() {
+    let sat = sats[i]
+    let t_now = ages[i % ages.length()] * 1440.0
+    // arbitrary jumps over +-24 h
+    let mut h = -24.0
+    while h <= 24.0 {
+      check(sat, t_now + h * 60.0)
+      h = h + 1.5
+    }
+    // sequential 16 ms frames (memoized rotation path), then 1 s steps
+    let mut t = t_now
+    let mut f = 0
+    while f < 150 {
+      t = t + 16.0 / 60000.0
+      check(sat, t)
+      f = f + 1
+    }
+    f = 0
+    while f < 60 {
+      t = t + 1.0 / 60.0
+      check(sat, t)
+      f = f + 1
+    }
+    i = i + 1
+  }
+  // 1e-6 km = 1 mm; observed maximum is 2.5e-7 km, and only on the degenerate
+  // bstar = -0.02 / 26-day cases whose SGP4 drag polynomial has already blown
+  // the orbit up to ~16 Earth radii (rounding-level relative error, 2.5e-12).
+  assert_true(max_err_km < 1.0e-6)
+}
+
+///|
 test "Starlink orbit stays bounded over one day of propagation" {
   let tle = @starlink-sim.parse_tle_lines(
     "1 44714U 19074B   26289.17018502  .00051451  00000+0  47456-3 0  9996", "2 44714  53.1444 201.1192 0002831 127.3037 232.8238 15.67116217383094",

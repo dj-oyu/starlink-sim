@@ -42,7 +42,24 @@ pub struct SatRec {
   nodecf : Double
   isimp : Bool
   shell_id : Int32
+  // Frame-to-frame sin/cos memo for `sgp4_pos_into` (see `sincos_memo_threshold`):
+  // the angle at which (s, c) were last evaluated exactly, per slow/fast angle.
+  mut memo_xmdf_ref : Double
+  mut memo_xmdf_s : Double
+  mut memo_xmdf_c : Double
+  mut memo_argp_ref : Double
+  mut memo_argp_s : Double
+  mut memo_argp_c : Double
+  mut memo_node_ref : Double
+  mut memo_node_s : Double
+  mut memo_node_c : Double
 }
+
+///|
+/// Max |theta - theta_ref| (rad) for which the memoized sin/cos are rotated by a
+/// 5th-order small-angle series instead of being re-evaluated. At 0.03 rad the
+/// series truncation error is d^6/720 < 1.1e-12 (< 1e-8 m at Starlink radii).
+let sincos_memo_threshold : Double = 0.03
 
 ///|
 /// Classify Starlink orbital shell from inclination (deg) and altitude (km):
@@ -259,6 +276,15 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
     nodecf,
     isimp,
     shell_id,
+    memo_xmdf_ref: 1.0e300,
+    memo_xmdf_s: 0.0,
+    memo_xmdf_c: 1.0,
+    memo_argp_ref: 1.0e300,
+    memo_argp_s: 0.0,
+    memo_argp_c: 1.0,
+    memo_node_ref: 1.0e300,
+    memo_node_s: 0.0,
+    memo_node_c: 1.0,
   }
 }
 
@@ -286,9 +312,31 @@ fn sgp4_pos_into(sat : SatRec, tsince : Double) -> Bool {
   let mut tempe = sat.bstar * sat.cc4 * tsince
   let mut templ = sat.t2cof * t2
 
+  // sin/cos(xmdf): rotate the memoized pair by the small delta since the last
+  // exact evaluation (5th-order series, see `sincos_memo_threshold`), else re-anchor.
+  let d_xmdf = xmdf - sat.memo_xmdf_ref
+  let mut sin_xmdf = 0.0
+  let mut cos_xmdf = 0.0
+  if d_xmdf.abs() < sincos_memo_threshold {
+    let d2 = d_xmdf * d_xmdf
+    let cd = 1.0 - d2 * (0.5 - d2 * 0.041666666666666664)
+    let sd = d_xmdf *
+      (1.0 - d2 * (0.16666666666666666 - d2 * 0.008333333333333333))
+    let s = sat.memo_xmdf_s
+    let c = sat.memo_xmdf_c
+    sin_xmdf = s * cd + c * sd
+    cos_xmdf = c * cd - s * sd
+  } else {
+    sincos_fast(xmdf)
+    sin_xmdf = sc_out.s
+    cos_xmdf = sc_out.c
+    sat.memo_xmdf_ref = xmdf
+    sat.memo_xmdf_s = sin_xmdf
+    sat.memo_xmdf_c = cos_xmdf
+  }
   if !sat.isimp {
     let delomg = sat.omgcof * tsince
-    let delmtemp = 1.0 + sat.eta * cos_rad(xmdf)
+    let delmtemp = 1.0 + sat.eta * cos_xmdf
     let delm = sat.xmcof * (delmtemp * delmtemp * delmtemp - sat.delmo)
     let temp = delomg + delm
     mm = xmdf + temp
@@ -296,7 +344,27 @@ fn sgp4_pos_into(sat : SatRec, tsince : Double) -> Bool {
     let t3 = t2 * tsince
     let t4 = t3 * tsince
     tempa = tempa - sat.d2 * t2 - sat.d3 * t3 - sat.d4 * t4
-    tempe = tempe + sat.bstar * sat.cc5 * (sin_rad(mm) - sat.sinmao)
+    // sin(mm) = sin(xmdf + temp) by angle addition; `temp` is a tiny drag
+    // correction (~1e-3 rad for fresh TLEs), so a 9th-order series is exact to
+    // 1e-16 for |temp| < 0.1. Stale TLEs fall back to the full evaluation.
+    let sin_mm = if temp.abs() < 0.1 {
+      let tt = temp * temp
+      let ct = 1.0 +
+        tt * (-0.5 + tt * (0.041666666666666664 - tt * 0.001388888888888889))
+      let st = temp *
+        (
+          1.0 +
+          tt *
+          (
+            -0.16666666666666666 +
+            tt * (0.008333333333333333 - tt * 0.0001984126984126984)
+          )
+        )
+      sin_xmdf * ct + cos_xmdf * st
+    } else {
+      sin_rad(mm)
+    }
+    tempe = tempe + sat.bstar * sat.cc5 * (sin_mm - sat.sinmao)
     templ = templ + sat.t3cof * t3 + t4 * (sat.t4cof + tsince * sat.t5cof)
   }
 
@@ -316,67 +384,126 @@ fn sgp4_pos_into(sat : SatRec, tsince : Double) -> Bool {
     em = 1.0e-6
   }
 
+  // No angle normalization here: every angle below is only ever used through
+  // `sincos_fast` (whose Cody-Waite range reduction handles |x| up to ~1e5 rad
+  // with <1e-12 rad error) or as a difference of two such angles, so the
+  // mod-2pi reductions of the reference implementation are mathematically
+  // redundant. `mp` == `mm` (mod 2pi) exactly.
   mm = mm + nm_init * templ
-  let xlm = mm + argpm + nodem
-  let nodem_norm = normalize_rad(nodem)
-  let argpm_norm = normalize_rad(argpm)
-  let xlm_norm = normalize_rad(xlm)
-  let mp = normalize_rad(xlm_norm - argpm_norm - nodem_norm)
+  let mp = mm
 
   let sinim = sat.sinio
   let cosim = sat.cosio
   let ep = em
-  let argpp = argpm_norm
-  let nodep = nodem_norm
+  let argpp = argpm
+  let nodep = nodem
 
-  // Long period periodics using fused sincos_rad
-  sincos_fast(argpp)
-  let sin_argpp = sc_out.s
-  let cos_argpp = sc_out.c
+  // Long period periodics (argpp drifts ~1e-5 rad/min: memo almost never re-anchors)
+  let d_argp = argpp - sat.memo_argp_ref
+  let mut sin_argpp = 0.0
+  let mut cos_argpp = 0.0
+  if d_argp.abs() < sincos_memo_threshold {
+    let d2 = d_argp * d_argp
+    let cd = 1.0 - d2 * (0.5 - d2 * 0.041666666666666664)
+    let sd = d_argp *
+      (1.0 - d2 * (0.16666666666666666 - d2 * 0.008333333333333333))
+    let s = sat.memo_argp_s
+    let c = sat.memo_argp_c
+    sin_argpp = s * cd + c * sd
+    cos_argpp = c * cd - s * sd
+  } else {
+    sincos_fast(argpp)
+    sin_argpp = sc_out.s
+    cos_argpp = sc_out.c
+    sat.memo_argp_ref = argpp
+    sat.memo_argp_s = sin_argpp
+    sat.memo_argp_c = cos_argpp
+  }
   let axnl = ep * cos_argpp
   let temp = 1.0 / (am * (1.0 - ep * ep))
   let aynl = ep * sin_argpp + temp * sat.aycof
-  let xl = mp + argpp + nodep + temp * sat.xlcof * axnl
 
-  // Solve Kepler's equation for (u = xl - nodep)
-  let u = normalize_rad(xl - nodep)
-  let mut eo1 = u
-  let mut tem5 = 9999.9
-  let mut ktr = 1
-  sincos_fast(eo1)
-  let s0 = sc_out.s
-  let c0 = sc_out.c
+  // Solve Kepler's equation for u = xl - nodep (unnormalized).
+  // u = xmdf + argpp + w, where w = (mm - xmdf) + (argpm - argpdf) + xlcof term
+  // is a small drag/long-period correction, so sin/cos(u) follow from the
+  // already computed sin/cos(xmdf), sin/cos(argpp) by angle addition plus a
+  // 9th-order series rotation by w (exact to 1e-16 for |w| < 0.1).
+  let u = mp + argpp + temp * sat.xlcof * axnl
+  let w = u - xmdf - argpp
+  let mut s0 = 0.0
+  let mut c0 = 0.0
+  if w.abs() < 0.1 {
+    let ww = w * w
+    let cw = 1.0 +
+      ww * (-0.5 + ww * (0.041666666666666664 - ww * 0.001388888888888889))
+    let sw = w *
+      (
+        1.0 +
+        ww *
+        (
+          -0.16666666666666666 +
+          ww * (0.008333333333333333 - ww * 0.0001984126984126984)
+        )
+      )
+    let sxa = sin_xmdf * cos_argpp + cos_xmdf * sin_argpp
+    let cxa = cos_xmdf * cos_argpp - sin_xmdf * sin_argpp
+    s0 = sxa * cw + cxa * sw
+    c0 = cxa * cw - sxa * sw
+  } else {
+    sincos_fast(u)
+    s0 = sc_out.s
+    c0 = sc_out.c
+  }
   let mut sineo1 = s0
   let mut coseo1 = c0
 
-  while ktr <= 10 {
-    tem5 = (u - aynl * coseo1 + axnl * sineo1 - eo1) /
-      (1.0 - coseo1 * axnl - sineo1 * aynl)
-    if tem5.abs() >= 0.95 {
-      tem5 = if tem5 > 0.0 { 0.95 } else { -0.95 }
-    }
-    eo1 = eo1 + tem5
-    let abs_t5 = tem5.abs()
-    if abs_t5 < 1.0e-12 {
-      break
-    }
-    if abs_t5 < 0.02 {
-      // Algebraic 3rd-order rotation update (accurate to < 6e-9, refined by next Newton step)
-      let t5_2 = tem5 * tem5
-      let cd = 1.0 - 0.5 * t5_2
-      let sd = tem5 * (1.0 - t5_2 / 6.0)
-      let next_s = sineo1 * cd + coseo1 * sd
-      let next_c = coseo1 * cd - sineo1 * sd
-      sineo1 = next_s
-      coseo1 = next_c
-    } else {
+  if axnl.abs() + aynl.abs() < 0.01 {
+    // Near-circular fast path (all Starlink: e ~ 1e-4..3e-3): three fixed
+    // Newton steps from E0 = u sharing one reciprocal of f'(E0) (so a single
+    // division-free series), with sin/cos(E) carried along by small-angle
+    // rotations (5th-order, then 1st-order twice). Per-step contraction is
+    // ~e^2, so at e = 0.01 the residual after step 3 is < 1e-15 rad, and the
+    // two 1st-order rotations contribute < (e^3/2)^2/2 < 2e-13 rad.
+    // Larger eccentricities use the general loop below.
+    // 1/(1 - x) with |x| < 0.01 as a geometric series (rel. error x^5 < 1e-10,
+    // which only perturbs the Newton contraction, not the fixed point).
+    let x = axnl * c0 + aynl * s0
+    let inv_fp = 1.0 + x * (1.0 + x * (1.0 + x * (1.0 + x)))
+    let d1 = (axnl * s0 - aynl * c0) * inv_fp
+    let d1_2 = d1 * d1
+    let cd1 = 1.0 - d1_2 * (0.5 - d1_2 * 0.041666666666666664)
+    let sd1 = d1 *
+      (1.0 - d1_2 * (0.16666666666666666 - d1_2 * 0.008333333333333333))
+    let s1 = s0 * cd1 + c0 * sd1
+    let c1 = c0 * cd1 - s0 * sd1
+    let d2 = (axnl * s1 - aynl * c1 - d1) * inv_fp
+    let s2 = s1 + c1 * d2
+    let c2 = c1 - s1 * d2
+    let d3 = (axnl * s2 - aynl * c2 - (d1 + d2)) * inv_fp
+    sineo1 = s2 + c2 * d3
+    coseo1 = c2 - s2 * d3
+  } else {
+    // General case (rare: e >= ~0.01): the reference Newton iteration with
+    // exact sin/cos per step, on the normalized angle so the 1e-12 tolerance
+    // is resolvable in double precision.
+    let un = normalize_rad(u)
+    let mut eo1 = un
+    let mut ktr = 1
+    while ktr <= 10 {
+      let mut tem5 = (un - aynl * coseo1 + axnl * sineo1 - eo1) /
+        (1.0 - coseo1 * axnl - sineo1 * aynl)
+      if tem5.abs() >= 0.95 {
+        tem5 = if tem5 > 0.0 { 0.95 } else { -0.95 }
+      }
+      eo1 = eo1 + tem5
       sincos_fast(eo1)
-      let sn = sc_out.s
-      let cn = sc_out.c
-      sineo1 = sn
-      coseo1 = cn
+      sineo1 = sc_out.s
+      coseo1 = sc_out.c
+      if tem5.abs() < 1.0e-12 {
+        break
+      }
+      ktr = ktr + 1
     }
-    ktr = ktr + 1
   }
 
   // Short period preliminary quantities using hardware sqrt()
@@ -389,15 +516,17 @@ fn sgp4_pos_into(sat : SatRec, tsince : Double) -> Bool {
     return false
   }
 
+  // (Replacing this sqrt and the three divisions by near-circular series was
+  // measured to be slower than the hardware ops, so they are kept exact.)
   let rl = am * (1.0 - ecose)
   let betal = one_minus_el2.sqrt()
   let temp_sp = esine / (1.0 + betal)
   let am_o_rl = am / rl
+  let temp_pl = 1.0 / pl
   let sinu = am_o_rl * (sineo1 - aynl - axnl * temp_sp)
   let cosu = am_o_rl * (coseo1 - axnl + aynl * temp_sp)
   let sin2u = (cosu + cosu) * sinu
   let cos2u = 1.0 - 2.0 * sinu * sinu
-  let temp_pl = 1.0 / pl
   let temp1_sp = 0.5 * j2 * temp_pl
   let temp2_sp = temp1_sp * temp_pl
 
@@ -422,9 +551,26 @@ fn sgp4_pos_into(sat : SatRec, tsince : Double) -> Bool {
   let cosi = cosim * cos_dinc - sinim * sin_dinc
 
   let xnode = nodep + 1.5 * temp2_sp * cosim * sin2u
-  sincos_fast(xnode)
-  let snod = sc_out.s
-  let cnod = sc_out.c
+  let d_node = xnode - sat.memo_node_ref
+  let mut snod = 0.0
+  let mut cnod = 0.0
+  if d_node.abs() < sincos_memo_threshold {
+    let d2 = d_node * d_node
+    let cd = 1.0 - d2 * (0.5 - d2 * 0.041666666666666664)
+    let sd = d_node *
+      (1.0 - d2 * (0.16666666666666666 - d2 * 0.008333333333333333))
+    let s = sat.memo_node_s
+    let c = sat.memo_node_c
+    snod = s * cd + c * sd
+    cnod = c * cd - s * sd
+  } else {
+    sincos_fast(xnode)
+    snod = sc_out.s
+    cnod = sc_out.c
+    sat.memo_node_ref = xnode
+    sat.memo_node_s = snod
+    sat.memo_node_c = cnod
+  }
   let xmx = -snod * cosi
   let xmy = cnod * cosi
   let ux = xmx * sinsu + cnod * cossu
