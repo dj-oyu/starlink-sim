@@ -263,13 +263,18 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
 }
 
 ///|
-/// Fast position-only SGP4 propagation in TEME frame (used for bulk constellation updates).
-/// Uses hardware `sqrt()`, fused `sincos_rad()`, precomputed `sat.a`, `sat.sinio`, `sat.cosio`,
-/// and small-angle rotation identities to avoid redundant transcendental calls.
-pub fn sgp4_propagate_pos(
-  sat : SatRec,
-  tsince : Double,
-) -> (Double, Double, Double, Bool) {
+priv struct PosOut {
+  mut x : Double
+  mut y : Double
+  mut z : Double
+}
+
+///|
+let pos_out : PosOut = { x: 0.0, y: 0.0, z: 0.0, }
+
+///|
+/// Allocation-free position-only SGP4: result in `pos_out`, returns validity.
+fn sgp4_pos_into(sat : SatRec, tsince : Double) -> Bool {
   let xmdf = sat.mo + sat.mdot * tsince
   let argpdf = sat.argpo + sat.argpdot * tsince
   let nodedf = sat.nodeo + sat.nodedot * tsince
@@ -297,7 +302,7 @@ pub fn sgp4_propagate_pos(
 
   let nm_init = sat.no_unkozai
   if nm_init <= 0.0 {
-    return (0.0, 0.0, 0.0, false)
+    return false
   }
 
   // sat.a is already (xke / no_unkozai)^(2/3)
@@ -305,7 +310,7 @@ pub fn sgp4_propagate_pos(
   let mut em = sat.ecco - tempe
 
   if em >= 1.0 || em < -0.001 {
-    return (0.0, 0.0, 0.0, false)
+    return false
   }
   if em < 1.0e-6 {
     em = 1.0e-6
@@ -325,7 +330,9 @@ pub fn sgp4_propagate_pos(
   let nodep = nodem_norm
 
   // Long period periodics using fused sincos_rad
-  let (sin_argpp, cos_argpp) = sincos_rad(argpp)
+  sincos_fast(argpp)
+  let sin_argpp = sc_out.s
+  let cos_argpp = sc_out.c
   let axnl = ep * cos_argpp
   let temp = 1.0 / (am * (1.0 - ep * ep))
   let aynl = ep * sin_argpp + temp * sat.aycof
@@ -336,7 +343,9 @@ pub fn sgp4_propagate_pos(
   let mut eo1 = u
   let mut tem5 = 9999.9
   let mut ktr = 1
-  let (s0, c0) = sincos_rad(eo1)
+  sincos_fast(eo1)
+  let s0 = sc_out.s
+  let c0 = sc_out.c
   let mut sineo1 = s0
   let mut coseo1 = c0
 
@@ -361,7 +370,9 @@ pub fn sgp4_propagate_pos(
       sineo1 = next_s
       coseo1 = next_c
     } else {
-      let (sn, cn) = sincos_rad(eo1)
+      sincos_fast(eo1)
+      let sn = sc_out.s
+      let cn = sc_out.c
       sineo1 = sn
       coseo1 = cn
     }
@@ -375,7 +386,7 @@ pub fn sgp4_propagate_pos(
   let one_minus_el2 = 1.0 - el2
   let pl = am * one_minus_el2
   if pl < 0.0 {
-    return (0.0, 0.0, 0.0, false)
+    return false
   }
 
   let rl = am * (1.0 - ecose)
@@ -393,7 +404,7 @@ pub fn sgp4_propagate_pos(
   let mrt = rl * (1.0 - 1.5 * temp2_sp * betal * sat.con41) +
     0.5 * temp1_sp * sat.x1mth2 * cos2u
   if mrt < 1.0 {
-    return (0.0, 0.0, 0.0, false)
+    return false
   }
 
   // su_corr = su - du where |du| ~ 2.7e-4 rad -> 3rd-order Taylor is exact to 1e-12
@@ -411,7 +422,9 @@ pub fn sgp4_propagate_pos(
   let cosi = cosim * cos_dinc - sinim * sin_dinc
 
   let xnode = nodep + 1.5 * temp2_sp * cosim * sin2u
-  let (snod, cnod) = sincos_rad(xnode)
+  sincos_fast(xnode)
+  let snod = sc_out.s
+  let cnod = sc_out.c
   let xmx = -snod * cosi
   let xmy = cnod * cosi
   let ux = xmx * sinsu + cnod * cossu
@@ -419,7 +432,20 @@ pub fn sgp4_propagate_pos(
   let uz = sini * sinsu
 
   let r_km = mrt * earth_radius_km
-  (r_km * ux, r_km * uy, r_km * uz, true)
+  pos_out.x = r_km * ux
+  pos_out.y = r_km * uy
+  pos_out.z = r_km * uz
+  true
+}
+
+///|
+/// Fast position-only SGP4 propagation in TEME frame.
+pub fn sgp4_propagate_pos(
+  sat : SatRec,
+  tsince : Double,
+) -> (Double, Double, Double, Bool) {
+  let ok = sgp4_pos_into(sat, tsince)
+  (pos_out.x, pos_out.y, pos_out.z, ok)
 }
 
 ///|

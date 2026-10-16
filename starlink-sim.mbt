@@ -180,8 +180,11 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
     let sat = sim_state.satellites[i]
     let shell_bits = sat.shell_id & 7
     let tsince = (jd - sat.jdsatepoch) * minutes_per_day
-    let (rx, ry, rz, ok) = sgp4_propagate_pos(sat, tsince)
+    let ok = sgp4_pos_into(sat, tsince)
     if ok {
+      let rx = pos_out.x
+      let ry = pos_out.y
+      let rz = pos_out.z
       let ex = cos_g * rx + sin_g * ry
       let ey = -sin_g * rx + cos_g * ry
       let ez = rz

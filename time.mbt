@@ -1,7 +1,16 @@
 ///|
-/// High-precision fused sin & cos using hardware f64.nearest range reduction
-/// and Cody-Waite pi/2 constants (accurate to ~1e-15 across all orbital angles).
-pub fn sincos_rad(x : Double) -> (Double, Double) {
+/// Scratch output for `sincos_fast` (avoids heap-allocating a tuple per call).
+priv struct SinCosOut {
+  mut s : Double
+  mut c : Double
+}
+
+///|
+let sc_out : SinCosOut = { s: 0.0, c: 0.0, }
+
+///|
+/// Fused sin & cos written into `sc_out` (allocation-free).
+fn sincos_fast(x : Double) -> Unit {
   let inv_pio2 = 0.63661977236758134308
   let pio2_hi = 1.57079632679489655800
   let pio2_lo = 6.12323399573676603587e-17
@@ -55,14 +64,26 @@ pub fn sincos_rad(x : Double) -> (Double, Double) {
     )
   let q = k.to_int() & 3
   if q == 0 {
-    (sin_r, cos_r)
+    sc_out.s = sin_r
+    sc_out.c = cos_r
   } else if q == 1 {
-    (cos_r, -sin_r)
+    sc_out.s = cos_r
+    sc_out.c = -sin_r
   } else if q == 2 {
-    (-sin_r, -cos_r)
+    sc_out.s = -sin_r
+    sc_out.c = -cos_r
   } else {
-    (-cos_r, sin_r)
+    sc_out.s = -cos_r
+    sc_out.c = sin_r
   }
+}
+
+///|
+/// High-precision fused sin & cos using hardware f64.nearest range reduction
+/// and Cody-Waite pi/2 constants.
+pub fn sincos_rad(x : Double) -> (Double, Double) {
+  sincos_fast(x)
+  (sc_out.s, sc_out.c)
 }
 
 ///|
