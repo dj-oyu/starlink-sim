@@ -173,28 +173,35 @@ export function App() {
     return { searchMatchIndices: set, searchResultsList: list };
   }, [engine, searchQuery, satVersion]);
 
-  // Overhead visible satellites list (sorted by highest elevation)
+  // Overhead visible satellites list (sorted by highest elevation, throttled to 1 Hz)
+  const overheadSecondTick = Math.floor(displayTimeMs / 1000);
   const overheadSatellites = useMemo(() => {
     if (!engine || !observer.enabled) return [];
     const indices = engine.visibleIndices;
-    const items = [];
+    const raw: { index: number; el: number }[] = [];
     for (let i = 0; i < indices.length; i++) {
       const idx = indices[i];
       const shId = engine.shellIds[idx];
       if (!(enabledShells[shId] ?? true)) continue;
-      const el = engine.api.get_sat_elevation_deg(idx);
-      const range = engine.api.get_sat_range_km(idx);
-      items.push({
-        index: idx,
-        name: engine.getSatName(idx),
-        satnum: engine.api.get_sat_satnum(idx),
-        el,
-        range,
-      });
+      raw.push({ index: idx, el: engine.api.get_sat_elevation_deg(idx) });
     }
-    items.sort((a, b) => b.el - a.el);
-    return items.slice(0, 30);
-  }, [engine, displayTimeMs, visibleCount, observer.enabled, enabledShells]);
+    raw.sort((a, b) => b.el - a.el);
+    const limit = Math.min(raw.length, 30);
+    const items = new Array(limit);
+    for (let i = 0; i < limit; i++) {
+      const { index, el } = raw[i];
+      items[i] = {
+        index,
+        name: engine.getSatName(index),
+        satnum: engine.api.get_sat_satnum(index),
+        el,
+        range: engine.api.get_sat_range_km(index),
+      };
+    }
+    return items;
+  }, [engine, overheadSecondTick, visibleCount, observer.enabled, enabledShells]);
+
+  const perfHistoryRef = useRef<FullPerfSnapshot[]>([]);
 
   const handleFrameStats = (
     simTimeMs: number,
@@ -205,11 +212,12 @@ export function App() {
     setDisplayTimeMs(simTimeMs);
     setVisibleCount(visCount);
     setPerfSnapshot(perf);
-    setPerfHistory((prev) => {
-      const next = prev.length >= 60 ? prev.slice(1) : [...prev];
-      next.push(perf);
-      return next;
-    });
+    const hist = perfHistoryRef.current;
+    if (hist.length >= 60) {
+      hist.shift();
+    }
+    hist.push(perf);
+    setPerfHistory(hist);
     setSelectedTelemetry(selTelemetry);
   };
 

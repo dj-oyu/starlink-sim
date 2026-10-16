@@ -599,9 +599,9 @@ export function ConstellationView({
       }
     }
 
-    // 5. Throttle UI telemetry state updates
+    // 5. Throttle UI telemetry state updates to 4 Hz (250ms) to minimize Preact VDOM allocations
     const nowPerf = performance.now();
-    if (nowPerf - lastUiReportRef.current > 80) {
+    if (nowPerf - lastUiReportRef.current > 250) {
       lastUiReportRef.current = nowPerf;
       const telemetry =
         selectedSatIndex !== null

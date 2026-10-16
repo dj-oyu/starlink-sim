@@ -180,7 +180,9 @@ export function Canvas({
     let rafId = 0;
     let lastTime = performance.now();
     let smoothedFps = 60;
-    const recentFrameTimes: number[] = [];
+    const recentFrameTimes = new Float32Array(60);
+    let ftCount = 0;
+    let ftPtr = 0;
 
     const animate = (now: number) => {
       rafId = requestAnimationFrame(animate);
@@ -191,9 +193,13 @@ export function Canvas({
       if (dtMs > 0 && dtMs < 500) {
         const instFps = 1000 / dtMs;
         smoothedFps = smoothedFps * 0.9 + instFps * 0.1;
-        recentFrameTimes.push(dtMs);
-        if (recentFrameTimes.length > 60) recentFrameTimes.shift();
-        const worstDt = Math.max(...recentFrameTimes);
+        recentFrameTimes[ftPtr] = dtMs;
+        ftPtr = (ftPtr + 1) % 60;
+        if (ftCount < 60) ftCount++;
+        let worstDt = dtMs;
+        for (let i = 0; i < ftCount; i++) {
+          if (recentFrameTimes[i] > worstDt) worstDt = recentFrameTimes[i];
+        }
         perfStats.fps = smoothedFps;
         perfStats.minFps = 1000 / worstDt;
         perfStats.frameTimeMs = dtMs;
