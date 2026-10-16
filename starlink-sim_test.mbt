@@ -29,6 +29,12 @@ test "Vallado AIAA 2006-6753 SGP4 benchmark verification (Sat 00005)" {
   assert_true((vx1 - 4.741887409).abs() < 1.0e-5)
   assert_true((vy1 - -4.151817765).abs() < 1.0e-5)
   assert_true((vz1 - -2.093935425).abs() < 1.0e-5)
+
+  let (px1, py1, pz1, pok1) = @starlink-sim.sgp4_propagate_pos(sat, 360.0)
+  assert_true(pok1)
+  assert_true((px1 - rx1).abs() < 1.0e-5)
+  assert_true((py1 - ry1).abs() < 1.0e-5)
+  assert_true((pz1 - rz1).abs() < 1.0e-5)
 }
 
 ///|

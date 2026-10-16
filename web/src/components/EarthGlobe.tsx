@@ -27,19 +27,16 @@ const EARTH_VERTEX_SHADER = /* glsl */ `
 
   void main() {
     vUv = uv;
-    vec4 worldPos = modelMatrix * vec4(position, 1.0);
-    vPositionWorld = worldPos.xyz;
-    vNormalWorld = normalize(mat3(modelMatrix) * normal);
+    vPositionWorld = position;
+    vNormalWorld = normal;
 
-    vec3 up = vec3(0.0, 1.0, 0.0);
-    vec3 tangent = normalize(cross(up, vNormalWorld));
-    if (length(tangent) < 0.001) {
-      tangent = vec3(1.0, 0.0, 0.0);
-    }
+    vec3 tangent = vec3(-normal.z, 0.0, normal.x);
+    float len = length(tangent);
+    tangent = len > 0.001 ? tangent / len : vec3(1.0, 0.0, 0.0);
     vTangentWorld = tangent;
-    vBitangentWorld = normalize(cross(vNormalWorld, tangent));
+    vBitangentWorld = cross(normal, tangent);
 
-    gl_Position = projectionMatrix * viewMatrix * worldPos;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
@@ -62,15 +59,13 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
 
   void main() {
     vec3 N = normalize(vNormalWorld);
-    vec3 T = normalize(vTangentWorld);
-    vec3 B = normalize(vBitangentWorld);
-    mat3 TBN = mat3(T, B, N);
+    mat3 TBN = mat3(normalize(vTangentWorld), normalize(vBitangentWorld), N);
 
     vec3 normalSample = texture2D(uNormalMap, vUv).xyz * 2.0 - 1.0;
     normalSample.xy *= 1.35;
     vec3 perturbedN = normalize(TBN * normalSample);
 
-    vec3 L = normalize(uSunDir);
+    vec3 L = uSunDir;
     vec3 V = normalize(cameraPosition - vPositionWorld);
     vec3 H = normalize(L + V);
 
@@ -99,7 +94,7 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
     float spec = pow(specAngle, 48.0) * specMask * max(sunDot, 0.0);
     vec3 specColor = mix(vec3(0.85, 0.93, 1.0), vec3(1.0, 0.65, 0.35), twilight) * spec * 0.75;
 
-    float fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.2);
+    float fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.0);
     vec3 atmosScatter = vec3(0.22, 0.58, 1.0) * fresnel * (0.35 + 0.65 * dayFactor);
 
     vec3 litDay = dayColor * diffuse * cloudShadow + specColor + twilightColor;
@@ -107,18 +102,20 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
 
     vec3 photorealColor = mix(litNight, litDay, dayFactor) + atmosScatter;
 
-    float landMask = 1.0 - specMask;
-    float elevation = packed.r;
-    vec3 tacticalLand = vec3(0.035, 0.085, 0.16) + vec3(0.04, 0.16, 0.28) * elevation;
-    vec3 tacticalOcean = vec3(0.008, 0.02, 0.045);
-    vec3 tacticalBase = mix(tacticalOcean, tacticalLand, landMask);
-    vec3 tacticalColor = tacticalBase + nightColor * vec3(0.3, 0.75, 1.0) * 0.65 + vec3(0.05, 0.28, 0.55) * fresnel * 0.55;
-    if (uDayNightEnabled > 0.5) {
-      tacticalColor *= (0.65 + 0.35 * dayFactor);
+    if (uTacticalMix > 0.001) {
+      float landMask = 1.0 - specMask;
+      float elevation = packed.r;
+      vec3 tacticalLand = vec3(0.035, 0.085, 0.16) + vec3(0.04, 0.16, 0.28) * elevation;
+      vec3 tacticalOcean = vec3(0.008, 0.02, 0.045);
+      vec3 tacticalBase = mix(tacticalOcean, tacticalLand, landMask);
+      vec3 tacticalColor = tacticalBase + nightColor * vec3(0.3, 0.75, 1.0) * 0.65 + vec3(0.05, 0.28, 0.55) * fresnel * 0.55;
+      if (uDayNightEnabled > 0.5) {
+        tacticalColor *= (0.65 + 0.35 * dayFactor);
+      }
+      gl_FragColor = vec4(mix(photorealColor, tacticalColor, uTacticalMix), 1.0);
+    } else {
+      gl_FragColor = vec4(photorealColor, 1.0);
     }
-
-    vec3 finalColor = mix(photorealColor, tacticalColor, uTacticalMix);
-    gl_FragColor = vec4(finalColor, 1.0);
   }
 `;
 
@@ -128,9 +125,8 @@ const CLOUDS_VERTEX_SHADER = /* glsl */ `
 
   void main() {
     vUv = uv;
-    vec4 worldPos = modelMatrix * vec4(position, 1.0);
-    vNormalWorld = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * worldPos;
+    vNormalWorld = normal;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
@@ -147,8 +143,7 @@ const CLOUDS_FRAGMENT_SHADER = /* glsl */ `
     if (cloud < 0.03) discard;
 
     vec3 N = normalize(vNormalWorld);
-    vec3 L = normalize(uSunDir);
-    float sunDot = dot(N, L);
+    float sunDot = dot(N, uSunDir);
     float dayFactor = mix(1.0, smoothstep(-0.18, 0.25, sunDot), uDayNightEnabled);
     float twilight = (1.0 - abs(clamp(sunDot * 4.0, -1.0, 1.0))) * smoothstep(-0.2, 0.08, sunDot) * uDayNightEnabled;
 
@@ -167,10 +162,9 @@ const ATMOS_VERTEX_SHADER = /* glsl */ `
   varying vec3 vPositionWorld;
 
   void main() {
-    vec4 worldPos = modelMatrix * vec4(position, 1.0);
-    vPositionWorld = worldPos.xyz;
-    vNormalWorld = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * worldPos;
+    vPositionWorld = position;
+    vNormalWorld = normal;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
@@ -184,12 +178,11 @@ const ATMOS_FRAGMENT_SHADER = /* glsl */ `
   void main() {
     vec3 N = normalize(vNormalWorld);
     vec3 V = normalize(cameraPosition - vPositionWorld);
-    vec3 L = normalize(uSunDir);
 
     float viewDot = dot(N, -V);
     float rim = pow(clamp(1.0 - viewDot, 0.0, 1.0), 2.8);
 
-    float sunDot = dot(N, L);
+    float sunDot = dot(N, uSunDir);
     float sunFactor = mix(0.85, smoothstep(-0.35, 0.4, sunDot), uDayNightEnabled);
     float twilight = (1.0 - abs(clamp(sunDot * 3.0, -1.0, 1.0))) * smoothstep(-0.3, 0.1, sunDot) * uDayNightEnabled;
 
@@ -308,8 +301,8 @@ export function EarthGlobe({
       loader.load('/assets/textures/earth_specular_2048.jpg'),
     );
 
-    // 3. Main Earth Sphere
-    const earthGeom = new THREE.SphereGeometry(1.0, 96, 96);
+    // 3. Main Earth Sphere (64x64 is visually identical to 96x96 while saving >50% vertex work)
+    const earthGeom = new THREE.SphereGeometry(1.0, 64, 64);
     const earthMat = new THREE.ShaderMaterial({
       vertexShader: EARTH_VERTEX_SHADER,
       fragmentShader: EARTH_FRAGMENT_SHADER,
@@ -332,7 +325,7 @@ export function EarthGlobe({
     earthMatRef.current = earthMat;
 
     // 4. 4K Dynamic Cloud Sphere
-    const cloudsGeom = new THREE.SphereGeometry(1.0055, 72, 72);
+    const cloudsGeom = new THREE.SphereGeometry(1.0055, 48, 48);
     const cloudsMat = new THREE.ShaderMaterial({
       vertexShader: CLOUDS_VERTEX_SHADER,
       fragmentShader: CLOUDS_FRAGMENT_SHADER,
@@ -350,7 +343,7 @@ export function EarthGlobe({
     cloudsMatRef.current = cloudsMat;
 
     // 5. Atmospheric Fresnel Rim Halo
-    const atmosGeom = new THREE.SphereGeometry(1.032, 64, 64);
+    const atmosGeom = new THREE.SphereGeometry(1.032, 48, 48);
     const atmosMat = new THREE.ShaderMaterial({
       vertexShader: ATMOS_VERTEX_SHADER,
       fragmentShader: ATMOS_FRAGMENT_SHADER,

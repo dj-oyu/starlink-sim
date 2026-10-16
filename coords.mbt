@@ -21,14 +21,14 @@ pub fn ecef_to_geodetic(
   y : Double,
   z : Double,
 ) -> (Double, Double, Double) {
-  let r = @math.pow(x * x + y * y, 0.5)
+  let r = (x * x + y * y).sqrt()
   let lon_rad = @math.atan2(y, x)
   let mut lat_rad = @math.atan2(z, r)
   let mut c = 1.0
   let mut k = 0
   while k < 4 {
     let sin_lat = @math.sin(lat_rad)
-    c = 1.0 / @math.pow(1.0 - wgs84_e2 * sin_lat * sin_lat, 0.5)
+    c = 1.0 / (1.0 - wgs84_e2 * sin_lat * sin_lat).sqrt()
     lat_rad = @math.atan2(z + wgs84_a * c * wgs84_e2 * sin_lat, r)
     k = k + 1
   }
@@ -55,7 +55,7 @@ pub fn geodetic_to_ecef(
   let cos_lat = @math.cos(lat)
   let sin_lon = @math.sin(lon)
   let cos_lon = @math.cos(lon)
-  let n = wgs84_a / @math.pow(1.0 - wgs84_e2 * sin_lat * sin_lat, 0.5)
+  let n = wgs84_a / (1.0 - wgs84_e2 * sin_lat * sin_lat).sqrt()
   let x = (n + alt_km) * cos_lat * cos_lon
   let y = (n + alt_km) * cos_lat * sin_lon
   let z = (n * (1.0 - wgs84_e2) + alt_km) * sin_lat
@@ -78,7 +78,7 @@ pub fn compute_look_angles(
   let rx = sat_x - ox
   let ry = sat_y - oy
   let rz = sat_z - oz
-  let range_km = @math.pow(rx * rx + ry * ry + rz * rz, 0.5)
+  let range_km = (rx * rx + ry * ry + rz * rz).sqrt()
   if range_km < 1.0e-6 {
     return (0.0, 90.0, 0.0)
   }

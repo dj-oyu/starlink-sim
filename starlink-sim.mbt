@@ -5,9 +5,6 @@ priv struct SimState {
   mut ecef_x : Array[Double]
   mut ecef_y : Array[Double]
   mut ecef_z : Array[Double]
-  mut vel_x : Array[Double]
-  mut vel_y : Array[Double]
-  mut vel_z : Array[Double]
   mut sat_ok : Array[Bool]
   mut sat_el_deg : Array[Double]
   mut sat_az_deg : Array[Double]
@@ -22,6 +19,7 @@ priv struct SimState {
   mut sun_x : Double
   mut sun_y : Double
   mut sun_z : Double
+  mut last_jd : Double
   orbit_path_xyz : Array[Double]
 }
 
@@ -31,9 +29,6 @@ let sim_state : SimState = {
   ecef_x: [],
   ecef_y: [],
   ecef_z: [],
-  vel_x: [],
-  vel_y: [],
-  vel_z: [],
   sat_ok: [],
   sat_el_deg: [],
   sat_az_deg: [],
@@ -48,6 +43,7 @@ let sim_state : SimState = {
   sun_x: 1.0,
   sun_y: 0.0,
   sun_z: 0.0,
+  last_jd: 2461330.5,
   orbit_path_xyz: [],
 }
 
@@ -58,9 +54,6 @@ pub fn reset_constellation() -> Unit {
   sim_state.ecef_x = []
   sim_state.ecef_y = []
   sim_state.ecef_z = []
-  sim_state.vel_x = []
-  sim_state.vel_y = []
-  sim_state.vel_z = []
   sim_state.sat_ok = []
   sim_state.sat_el_deg = []
   sim_state.sat_az_deg = []
@@ -94,9 +87,6 @@ pub fn add_satellite_elements(
   sim_state.ecef_x.push(0.0)
   sim_state.ecef_y.push(0.0)
   sim_state.ecef_z.push(0.0)
-  sim_state.vel_x.push(0.0)
-  sim_state.vel_y.push(0.0)
-  sim_state.vel_z.push(0.0)
   sim_state.sat_ok.push(false)
   sim_state.sat_el_deg.push(-90.0)
   sim_state.sat_az_deg.push(0.0)
@@ -134,6 +124,7 @@ pub fn set_observer(
 /// Returns the number of valid propagated satellites.
 pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let jd = unix_ms_to_jd(unix_ms)
+  sim_state.last_jd = jd
   let gmst = gstime(jd)
   let cos_g = @math.cos(gmst)
   let sin_g = @math.sin(gmst)
@@ -159,6 +150,8 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   let up_y = cos_lat * sin_lon
   let up_z = sin_lat
   let min_sin_el = @math.sin(sim_state.obs_min_el_deg * deg_to_rad)
+  let min_sin_el_sq = min_sin_el * min_sin_el
+  let obs_on = sim_state.obs_enabled
 
   let n = sim_state.satellites.length()
   let mut valid_count = 0
@@ -168,7 +161,7 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
   while i < n {
     let sat = sim_state.satellites[i]
     let tsince = (jd - sat.jdsatepoch) * minutes_per_day
-    let (rx, ry, rz, vx, vy, vz, ok) = sgp4_propagate(sat, tsince)
+    let (rx, ry, rz, ok) = sgp4_propagate_pos(sat, tsince)
     if ok {
       let ex = cos_g * rx + sin_g * ry
       let ey = -sin_g * rx + cos_g * ry
@@ -176,23 +169,21 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
       sim_state.ecef_x[i] = ex
       sim_state.ecef_y[i] = ey
       sim_state.ecef_z[i] = ez
-      sim_state.vel_x[i] = cos_g * vx + sin_g * vy
-      sim_state.vel_y[i] = -sin_g * vx + cos_g * vy
-      sim_state.vel_z[i] = vz
       sim_state.sat_ok[i] = true
       valid_count = valid_count + 1
 
-      if sim_state.obs_enabled {
+      if obs_on {
         let dx = ex - ox
         let dy = ey - oy
         let dz = ez - oz
         let top_z = up_x * dx + up_y * dy + up_z * dz
-        // Fast horizon cull: if top_z <= 0, satellite is below horizon
+        // Fast horizon and elevation cone cull without sqrt:
+        // top_z / sqrt(range_sq) >= min_sin_el <==> top_z^2 >= range_sq * min_sin_el^2
         if top_z > 0.0 {
           let range_sq = dx * dx + dy * dy + dz * dz
-          let range = @math.pow(range_sq, 0.5)
-          let sin_el = top_z / range
-          if sin_el >= min_sin_el {
+          if top_z * top_z >= range_sq * min_sin_el_sq {
+            let range = range_sq.sqrt()
+            let sin_el = top_z / range
             let el_deg = @math.asin(if sin_el > 1.0 { 1.0 } else { sin_el }) *
               rad_to_deg
             let top_s = sin_lat * cos_lon * dx +
@@ -248,12 +239,16 @@ pub fn get_sat_ecef_z(idx : Int32) -> Double {
 }
 
 ///|
-/// Get satellite velocity magnitude (speed) in km/s.
+/// Get satellite velocity magnitude (speed) in km/s (computed on-demand for selected satellite).
 pub fn get_sat_speed_kms(idx : Int32) -> Double {
-  let vx = sim_state.vel_x[idx]
-  let vy = sim_state.vel_y[idx]
-  let vz = sim_state.vel_z[idx]
-  @math.pow(vx * vx + vy * vy + vz * vz, 0.5)
+  let sat = sim_state.satellites[idx]
+  let tsince = (sim_state.last_jd - sat.jdsatepoch) * minutes_per_day
+  let (_, _, _, vx, vy, vz, ok) = sgp4_propagate(sat, tsince)
+  if ok {
+    (vx * vx + vy * vy + vz * vz).sqrt()
+  } else {
+    0.0
+  }
 }
 
 ///|
@@ -372,8 +367,6 @@ pub fn get_sun_ecef_z() -> Double {
 ///|
 /// Compute an orbital trajectory path for satellite `idx` centered around `center_unix_ms`,
 /// spanning `[-half_span_mins, +half_span_mins]` with `num_steps` sample points.
-/// Coordinates are stored in ECEF (or snapshot-locked ECI rotated by `current_gmst` so the
-/// inertial orbital ring is smooth) and can be retrieved via `get_orbit_path_coord`.
 pub fn compute_orbit_path(
   idx : Int32,
   center_unix_ms : Double,
@@ -398,7 +391,7 @@ pub fn compute_orbit_path(
     let offset_min = -half_span_mins + 2.0 * half_span_mins * frac
     let sample_jd = center_jd + offset_min / minutes_per_day
     let tsince = (sample_jd - sat.jdsatepoch) * minutes_per_day
-    let (rx, ry, rz, _, _, _, ok) = sgp4_propagate(sat, tsince)
+    let (rx, ry, rz, ok) = sgp4_propagate_pos(sat, tsince)
     if ok {
       if use_ground_track != 0 {
         let g = gstime(sample_jd)
@@ -407,7 +400,6 @@ pub fn compute_orbit_path(
         sim_state.orbit_path_xyz.push(ey)
         sim_state.orbit_path_xyz.push(ez)
       } else {
-        // Inertial ring rotated into current Earth orientation
         let ex = cos_cg * rx + sin_cg * ry
         let ey = -sin_cg * rx + cos_cg * ry
         let ez = rz

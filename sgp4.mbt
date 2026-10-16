@@ -14,6 +14,8 @@ pub struct SatRec {
   a : Double
   alta : Double
   altp : Double
+  sinio : Double
+  cosio : Double
   con41 : Double
   cc1 : Double
   cc4 : Double
@@ -71,7 +73,7 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
   let x2o3 = 2.0 / 3.0
   let eccsq = tle.ecco * tle.ecco
   let omeosq = 1.0 - eccsq
-  let rteosq = @math.pow(omeosq, 0.5)
+  let rteosq = omeosq.sqrt()
   let cosio = @math.cos(tle.inclo)
   let cosio2 = cosio * cosio
 
@@ -115,8 +117,9 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
   let etasq = eta * eta
   let eeta = tle.ecco * eta
   let psisq = (1.0 - etasq).abs()
-  let coef = qzms24 * @math.pow(tsi, 4.0)
-  let coef1 = coef / @math.pow(psisq, 3.5)
+  let tsi2 = tsi * tsi
+  let coef = qzms24 * tsi2 * tsi2
+  let coef1 = coef / (psisq * psisq * psisq * psisq.sqrt())
   let cc2 = coef1 *
     no_unkozai *
     (
@@ -181,7 +184,8 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
     -0.25 * j3oj2 * sinio * (3.0 + 5.0 * cosio) / 1.5e-12
   }
   let aycof = -0.5 * j3oj2 * sinio
-  let delmo = @math.pow(1.0 + eta * @math.cos(tle.mo), 3.0)
+  let delmo_base = 1.0 + eta * @math.cos(tle.mo)
+  let delmo = delmo_base * delmo_base * delmo_base
   let sinmao = @math.sin(tle.mo)
   let x7thm1 = 7.0 * cosio2 - 1.0
 
@@ -227,6 +231,8 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
     a: ao,
     alta,
     altp,
+    sinio,
+    cosio,
     con41,
     cc1,
     cc4,
@@ -257,13 +263,171 @@ pub fn sgp4_init(tle : TleData) -> SatRec {
 }
 
 ///|
-/// Propagate initialized SGP4 satellite record by `tsince` minutes from TLE epoch.
-/// Returns `(rx_km, ry_km, rz_km, vx_kms, vy_kms, vz_kms, ok)` in the TEME coordinate frame.
+/// Fast position-only SGP4 propagation in TEME frame (used for bulk constellation updates).
+/// Uses hardware `sqrt()`, fused `sincos_rad()`, precomputed `sat.a`, `sat.sinio`, `sat.cosio`,
+/// and small-angle rotation identities to avoid redundant transcendental calls.
+pub fn sgp4_propagate_pos(
+  sat : SatRec,
+  tsince : Double,
+) -> (Double, Double, Double, Bool) {
+  let xmdf = sat.mo + sat.mdot * tsince
+  let argpdf = sat.argpo + sat.argpdot * tsince
+  let nodedf = sat.nodeo + sat.nodedot * tsince
+  let mut argpm = argpdf
+  let mut mm = xmdf
+  let t2 = tsince * tsince
+  let nodem = nodedf + sat.nodecf * t2
+  let mut tempa = 1.0 - sat.cc1 * tsince
+  let mut tempe = sat.bstar * sat.cc4 * tsince
+  let mut templ = sat.t2cof * t2
+
+  if !sat.isimp {
+    let delomg = sat.omgcof * tsince
+    let delmtemp = 1.0 + sat.eta * cos_rad(xmdf)
+    let delm = sat.xmcof * (delmtemp * delmtemp * delmtemp - sat.delmo)
+    let temp = delomg + delm
+    mm = xmdf + temp
+    argpm = argpdf - temp
+    let t3 = t2 * tsince
+    let t4 = t3 * tsince
+    tempa = tempa - sat.d2 * t2 - sat.d3 * t3 - sat.d4 * t4
+    tempe = tempe + sat.bstar * sat.cc5 * (sin_rad(mm) - sat.sinmao)
+    templ = templ + sat.t3cof * t3 + t4 * (sat.t4cof + tsince * sat.t5cof)
+  }
+
+  let nm_init = sat.no_unkozai
+  if nm_init <= 0.0 {
+    return (0.0, 0.0, 0.0, false)
+  }
+
+  // sat.a is already (xke / no_unkozai)^(2/3)
+  let am = sat.a * tempa * tempa
+  let mut em = sat.ecco - tempe
+
+  if em >= 1.0 || em < -0.001 {
+    return (0.0, 0.0, 0.0, false)
+  }
+  if em < 1.0e-6 {
+    em = 1.0e-6
+  }
+
+  mm = mm + nm_init * templ
+  let xlm = mm + argpm + nodem
+  let nodem_norm = normalize_rad(nodem)
+  let argpm_norm = normalize_rad(argpm)
+  let xlm_norm = normalize_rad(xlm)
+  let mp = normalize_rad(xlm_norm - argpm_norm - nodem_norm)
+
+  let sinim = sat.sinio
+  let cosim = sat.cosio
+  let ep = em
+  let argpp = argpm_norm
+  let nodep = nodem_norm
+
+  // Long period periodics using fused sincos_rad
+  let (sin_argpp, cos_argpp) = sincos_rad(argpp)
+  let axnl = ep * cos_argpp
+  let temp = 1.0 / (am * (1.0 - ep * ep))
+  let aynl = ep * sin_argpp + temp * sat.aycof
+  let xl = mp + argpp + nodep + temp * sat.xlcof * axnl
+
+  // Solve Kepler's equation for (u = xl - nodep)
+  let u = normalize_rad(xl - nodep)
+  let mut eo1 = u
+  let mut tem5 = 9999.9
+  let mut ktr = 1
+  let (s0, c0) = sincos_rad(eo1)
+  let mut sineo1 = s0
+  let mut coseo1 = c0
+
+  while ktr <= 10 {
+    tem5 = (u - aynl * coseo1 + axnl * sineo1 - eo1) /
+      (1.0 - coseo1 * axnl - sineo1 * aynl)
+    if tem5.abs() >= 0.95 {
+      tem5 = if tem5 > 0.0 { 0.95 } else { -0.95 }
+    }
+    eo1 = eo1 + tem5
+    let abs_t5 = tem5.abs()
+    if abs_t5 < 1.0e-12 {
+      break
+    }
+    if abs_t5 < 0.02 {
+      // Algebraic 3rd-order rotation update (accurate to < 6e-9, refined by next Newton step)
+      let t5_2 = tem5 * tem5
+      let cd = 1.0 - 0.5 * t5_2
+      let sd = tem5 * (1.0 - t5_2 / 6.0)
+      let next_s = sineo1 * cd + coseo1 * sd
+      let next_c = coseo1 * cd - sineo1 * sd
+      sineo1 = next_s
+      coseo1 = next_c
+    } else {
+      let (sn, cn) = sincos_rad(eo1)
+      sineo1 = sn
+      coseo1 = cn
+    }
+    ktr = ktr + 1
+  }
+
+  // Short period preliminary quantities using hardware sqrt()
+  let ecose = axnl * coseo1 + aynl * sineo1
+  let esine = axnl * sineo1 - aynl * coseo1
+  let el2 = axnl * axnl + aynl * aynl
+  let one_minus_el2 = 1.0 - el2
+  let pl = am * one_minus_el2
+  if pl < 0.0 {
+    return (0.0, 0.0, 0.0, false)
+  }
+
+  let rl = am * (1.0 - ecose)
+  let betal = one_minus_el2.sqrt()
+  let temp_sp = esine / (1.0 + betal)
+  let am_o_rl = am / rl
+  let sinu = am_o_rl * (sineo1 - aynl - axnl * temp_sp)
+  let cosu = am_o_rl * (coseo1 - axnl + aynl * temp_sp)
+  let sin2u = (cosu + cosu) * sinu
+  let cos2u = 1.0 - 2.0 * sinu * sinu
+  let temp_pl = 1.0 / pl
+  let temp1_sp = 0.5 * j2 * temp_pl
+  let temp2_sp = temp1_sp * temp_pl
+
+  let mrt = rl * (1.0 - 1.5 * temp2_sp * betal * sat.con41) +
+    0.5 * temp1_sp * sat.x1mth2 * cos2u
+  if mrt < 1.0 {
+    return (0.0, 0.0, 0.0, false)
+  }
+
+  // su_corr = su - du where |du| ~ 2.7e-4 rad -> 3rd-order Taylor is exact to 1e-12
+  let du = 0.25 * temp2_sp * sat.x7thm1 * sin2u
+  let cos_du = 1.0 - 0.5 * du * du
+  let sin_du = du * (1.0 - du * du / 6.0)
+  let sinsu = sinu * cos_du - cosu * sin_du
+  let cossu = cosu * cos_du + sinu * sin_du
+
+  // xinc = inclo + dinc where |dinc| ~ 8e-4 rad
+  let dinc = 1.5 * temp2_sp * cosim * sinim * cos2u
+  let cos_dinc = 1.0 - 0.5 * dinc * dinc
+  let sin_dinc = dinc * (1.0 - dinc * dinc / 6.0)
+  let sini = sinim * cos_dinc + cosim * sin_dinc
+  let cosi = cosim * cos_dinc - sinim * sin_dinc
+
+  let xnode = nodep + 1.5 * temp2_sp * cosim * sin2u
+  let (snod, cnod) = sincos_rad(xnode)
+  let xmx = -snod * cosi
+  let xmy = cnod * cosi
+  let ux = xmx * sinsu + cnod * cossu
+  let uy = xmy * sinsu + snod * cossu
+  let uz = sini * sinsu
+
+  let r_km = mrt * earth_radius_km
+  (r_km * ux, r_km * uy, r_km * uz, true)
+}
+
+///|
+/// Full SGP4 propagation returning both position (km) and velocity (km/s) in TEME frame.
 pub fn sgp4_propagate(
   sat : SatRec,
   tsince : Double,
 ) -> (Double, Double, Double, Double, Double, Double, Bool) {
-  let x2o3 = 2.0 / 3.0
   let vkmpersec = earth_radius_km * xke / 60.0
 
   // Update for secular gravity and atmospheric drag
@@ -300,8 +464,9 @@ pub fn sgp4_propagate(
     return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
   }
 
-  let am = @math.pow(xke / nm_init, x2o3) * tempa * tempa
-  let nm = xke / @math.pow(am, 1.5)
+  let am = sat.a * tempa * tempa
+  let am_sqrt = am.sqrt()
+  let nm = xke / (am * am_sqrt)
   em = em - tempe
 
   if em >= 1.0 || em < -0.001 {
@@ -318,10 +483,9 @@ pub fn sgp4_propagate(
   let xlm_norm = normalize_rad(xlm)
   let mm_norm = normalize_rad(xlm_norm - argpm_norm - nodem_norm)
 
-  let sinim = @math.sin(inclm)
-  let cosim = @math.cos(inclm)
+  let sinim = sat.sinio
+  let cosim = sat.cosio
 
-  // Add lunar-solar periodics (zero for Near-Earth LEO)
   let ep = em
   let xincp = inclm
   let argpp = argpm_norm
@@ -364,15 +528,16 @@ pub fn sgp4_propagate(
   let ecose = axnl * coseo1 + aynl * sineo1
   let esine = axnl * sineo1 - aynl * coseo1
   let el2 = axnl * axnl + aynl * aynl
-  let pl = am * (1.0 - el2)
+  let one_minus_el2 = 1.0 - el2
+  let pl = am * one_minus_el2
   if pl < 0.0 {
     return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
   }
 
   let rl = am * (1.0 - ecose)
-  let rdotl = @math.pow(am, 0.5) * esine / rl
-  let rvdotl = @math.pow(pl, 0.5) / rl
-  let betal = @math.pow(1.0 - el2, 0.5)
+  let rdotl = am_sqrt * esine / rl
+  let rvdotl = pl.sqrt() / rl
+  let betal = one_minus_el2.sqrt()
   let temp_sp = esine / (1.0 + betal)
   let sinu = am / rl * (sineo1 - aynl - axnl * temp_sp)
   let cosu = am / rl * (coseo1 - axnl + aynl * temp_sp)

@@ -12,6 +12,8 @@ pub fn compute_look_angles(Double, Double, Double, Double, Double, Double) -> (D
 
 pub fn compute_orbit_path(Int, Double, Double, Int, Int) -> Int
 
+pub fn cos_rad(Double) -> Double
+
 pub let deg_to_rad : Double
 
 pub let earth_radius_km : Double
@@ -100,6 +102,12 @@ pub fn sgp4_init(TleData) -> SatRec
 
 pub fn sgp4_propagate(SatRec, Double) -> (Double, Double, Double, Double, Double, Double, Bool)
 
+pub fn sgp4_propagate_pos(SatRec, Double) -> (Double, Double, Double, Bool)
+
+pub fn sin_rad(Double) -> Double
+
+pub fn sincos_rad(Double) -> (Double, Double)
+
 pub fn sun_direction_ecef(Double) -> (Double, Double, Double)
 
 pub fn teme_to_ecef(Double, Double, Double, Double) -> (Double, Double, Double)
@@ -135,6 +143,8 @@ pub struct SatRec {
   a : Double
   alta : Double
   altp : Double
+  sinio : Double
+  cosio : Double
   con41 : Double
   cc1 : Double
   cc4 : Double

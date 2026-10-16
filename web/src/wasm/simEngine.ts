@@ -172,6 +172,7 @@ export class StarlinkSimEngine {
   public positionsThree: Float32Array = new Float32Array(0);
   public validFlags: Uint8Array = new Uint8Array(0);
   public visibleFlags: Uint8Array = new Uint8Array(0);
+  public shellIds: Uint8Array = new Uint8Array(0);
   public visibleIndices: number[] = [];
   public shellCounts: number[] = [0, 0, 0, 0, 0];
   public sunDirectionThree: [number, number, number] = [1, 0, 0];
@@ -292,6 +293,10 @@ export class StarlinkSimEngine {
     this.positionsThree = new Float32Array(total * 3);
     this.validFlags = new Uint8Array(total);
     this.visibleFlags = new Uint8Array(total);
+    this.shellIds = new Uint8Array(total);
+    for (let i = 0; i < total; i++) {
+      this.shellIds[i] = this.metadata[i].shellId;
+    }
     if (epochCount > 0) {
       this.defaultEpochUnixMs = epochSum / epochCount;
     }
@@ -321,26 +326,28 @@ export class StarlinkSimEngine {
     const sz = this.api.get_sun_ecef_z();
     this.sunDirectionThree = [sx, sz, -sy];
 
+    const api = this.api;
     const count = this.metadata.length;
     const invR = 1.0 / EARTH_RADIUS_KM;
     const pos = this.positionsThree;
     const valid = this.validFlags;
     const vis = this.visibleFlags;
-    const visList: number[] = [];
+    const visList = this.visibleIndices;
+    visList.length = 0;
 
     for (let i = 0; i < count; i++) {
-      const ok = this.api.get_sat_valid(i);
+      const ok = api.get_sat_valid(i);
       valid[i] = ok;
       const i3 = i * 3;
       if (ok) {
-        const ex = this.api.get_sat_ecef_x(i);
-        const ey = this.api.get_sat_ecef_y(i);
-        const ez = this.api.get_sat_ecef_z(i);
+        const ex = api.get_sat_ecef_x(i);
+        const ey = api.get_sat_ecef_y(i);
+        const ez = api.get_sat_ecef_z(i);
         pos[i3] = ex * invR;
         pos[i3 + 1] = ez * invR;
         pos[i3 + 2] = -ey * invR;
 
-        const isVis = this.api.get_sat_visible(i);
+        const isVis = api.get_sat_visible(i);
         vis[i] = isVis;
         if (isVis) {
           visList.push(i);
@@ -354,11 +361,10 @@ export class StarlinkSimEngine {
     }
 
     const t2 = performance.now();
-    this.visibleIndices = visList;
     this.wasmPureSgp4Ms = t1 - t0;
     this.wasmReadoutMs = t2 - t1;
     this.lastPropagateMs = t2 - t0;
-    this.wasmMemoryBytes = this.api.memory?.buffer?.byteLength ?? 0;
+    this.wasmMemoryBytes = api.memory?.buffer?.byteLength ?? 0;
   }
 
   getSatelliteTelemetry(idx: number): SatelliteTelemetry | null {

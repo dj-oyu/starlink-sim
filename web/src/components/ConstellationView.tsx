@@ -99,17 +99,48 @@ export function ConstellationView({
 
   const satCount = engine.metadata.length;
 
-  const { posAttr, colAttr, sizeAttr, commLinePositions } = useMemo(() => {
+  const {
+    posAttr,
+    colAttr,
+    sizeAttr,
+    commLineAttr,
+    commLinePositions,
+    prevStateCode,
+    shellRgbFlat,
+  } = useMemo(() => {
     const count = Math.max(satCount, 1);
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
     const sz = new Float32Array(count);
     const comm = new Float32Array(600 * 6);
+    const stateCode = new Uint8Array(count);
+    stateCode.fill(255);
+
+    const pAttr = new THREE.BufferAttribute(pos, 3);
+    pAttr.setUsage(THREE.DynamicDrawUsage);
+    const cAttr = new THREE.BufferAttribute(col, 3);
+    cAttr.setUsage(THREE.DynamicDrawUsage);
+    const sAttr = new THREE.BufferAttribute(sz, 1);
+    sAttr.setUsage(THREE.DynamicDrawUsage);
+    const commAttr = new THREE.BufferAttribute(comm, 3);
+    commAttr.setUsage(THREE.DynamicDrawUsage);
+
+    const rgbFlat = new Float32Array(5 * 3);
+    for (let s = 0; s < 5; s++) {
+      const rgb = SHELL_INFO[s]?.rgb ?? [0.22, 0.74, 0.97];
+      rgbFlat[s * 3] = rgb[0];
+      rgbFlat[s * 3 + 1] = rgb[1];
+      rgbFlat[s * 3 + 2] = rgb[2];
+    }
+
     return {
-      posAttr: new THREE.BufferAttribute(pos, 3),
-      colAttr: new THREE.BufferAttribute(col, 3),
-      sizeAttr: new THREE.BufferAttribute(sz, 1),
+      posAttr: pAttr,
+      colAttr: cAttr,
+      sizeAttr: sAttr,
+      commLineAttr: commAttr,
       commLinePositions: comm,
+      prevStateCode: stateCode,
+      shellRgbFlat: rgbFlat,
     };
   }, [satCount]);
 
@@ -200,6 +231,8 @@ export function ConstellationView({
     obsRingGeomRef.current = obsRingGeom;
 
     const commGeom = new THREE.BufferGeometry();
+    commGeom.setAttribute('position', commLineAttr);
+    commGeom.setDrawRange(0, 0);
     const commMat = new THREE.LineBasicMaterial({
       color: 0x34d399,
       transparent: true,
@@ -218,7 +251,7 @@ export function ConstellationView({
       scene.remove(group);
       pointsRef.current = null;
     };
-  }, [scene, posAttr, colAttr, sizeAttr]);
+  }, [scene, posAttr, colAttr, sizeAttr, commLineAttr]);
 
   // Keep MoonBit observer & Ground Station geometry synced
   const obsThreePos = useMemo(() => {
@@ -322,14 +355,31 @@ export function ConstellationView({
     const srcPos = engine.positionsThree;
     const valid = engine.validFlags;
     const vis = engine.visibleFlags;
+    const shellIds = engine.shellIds;
     const dstPos = posAttr.array as Float32Array;
     const dstCol = colAttr.array as Float32Array;
     const dstSize = sizeAttr.array as Float32Array;
     const hasSearch = searchMatchIndices !== null;
+    const obsEnabled = observer.enabled;
+    const s0 = enabledShells[0] ?? true;
+    const s1 = enabledShells[1] ?? true;
+    const s2 = enabledShells[2] ?? true;
+    const s3 = enabledShells[3] ?? true;
+    const s4 = enabledShells[4] ?? true;
+    let styleDirty = false;
 
     for (let i = 0; i < satCount; i++) {
-      const meta = engine.metadata[i];
-      const shellEnabled = enabledShells[meta.shellId] ?? true;
+      const shId = shellIds[i];
+      const shellEnabled =
+        shId === 0
+          ? s0
+          : shId === 1
+            ? s1
+            : shId === 2
+              ? s2
+              : shId === 3
+                ? s3
+                : s4;
       const matchesSearch = !hasSearch || searchMatchIndices.has(i);
       const i3 = i * 3;
 
@@ -337,7 +387,11 @@ export function ConstellationView({
         dstPos[i3] = 0;
         dstPos[i3 + 1] = 0;
         dstPos[i3 + 2] = 0;
-        dstSize[i] = 0;
+        if (prevStateCode[i] !== 0) {
+          prevStateCode[i] = 0;
+          dstSize[i] = 0;
+          styleDirty = true;
+        }
         continue;
       }
 
@@ -345,32 +399,47 @@ export function ConstellationView({
       dstPos[i3 + 1] = srcPos[i3 + 1];
       dstPos[i3 + 2] = srcPos[i3 + 2];
 
+      let code: number;
       if (i === selectedSatIndex) {
-        dstCol[i3] = 1.0;
-        dstCol[i3 + 1] = 0.92;
-        dstCol[i3 + 2] = 0.25;
-        dstSize[i] = 8.5;
-      } else if (observer.enabled && vis[i]) {
-        dstCol[i3] = 0.15;
-        dstCol[i3 + 1] = 1.0;
-        dstCol[i3 + 2] = 0.55;
-        dstSize[i] = 5.4;
+        code = 3;
+      } else if (obsEnabled && vis[i]) {
+        code = 2;
       } else {
-        const rgb = SHELL_INFO[meta.shellId]?.rgb ?? [0.22, 0.74, 0.97];
-        dstCol[i3] = rgb[0];
-        dstCol[i3 + 1] = rgb[1];
-        dstCol[i3 + 2] = rgb[2];
-        dstSize[i] = hasSearch ? 4.8 : 2.8;
+        code = hasSearch ? 4 : 1;
+      }
+
+      if (prevStateCode[i] !== code) {
+        prevStateCode[i] = code;
+        styleDirty = true;
+        if (code === 3) {
+          dstCol[i3] = 1.0;
+          dstCol[i3 + 1] = 0.92;
+          dstCol[i3 + 2] = 0.25;
+          dstSize[i] = 8.5;
+        } else if (code === 2) {
+          dstCol[i3] = 0.15;
+          dstCol[i3 + 1] = 1.0;
+          dstCol[i3 + 2] = 0.55;
+          dstSize[i] = 5.4;
+        } else {
+          const cIdx = shId * 3;
+          dstCol[i3] = shellRgbFlat[cIdx];
+          dstCol[i3 + 1] = shellRgbFlat[cIdx + 1];
+          dstCol[i3 + 2] = shellRgbFlat[cIdx + 2];
+          dstSize[i] = code === 4 ? 4.8 : 2.8;
+        }
       }
     }
 
     posAttr.needsUpdate = true;
-    colAttr.needsUpdate = true;
-    sizeAttr.needsUpdate = true;
+    if (styleDirty) {
+      colAttr.needsUpdate = true;
+      sizeAttr.needsUpdate = true;
+    }
 
     // 3. Update Ground Station visibility & communication links
     if (obsGroupRef.current) {
-      obsGroupRef.current.visible = observer.enabled;
+      obsGroupRef.current.visible = obsEnabled;
       if (obsPinMeshRef.current) {
         obsPinMeshRef.current.position.set(
           obsThreePos[0],
@@ -381,32 +450,37 @@ export function ConstellationView({
     }
 
     if (commLinesGeomRef.current) {
-      if (observer.enabled && showCommLinks) {
+      if (obsEnabled && showCommLinks) {
         const visIndices = engine.visibleIndices;
         const linkCount = Math.min(visIndices.length, 600);
         const [ox, oy, oz] = obsThreePos;
         let ptr = 0;
         for (let k = 0; k < linkCount; k++) {
           const sIdx = visIndices[k];
-          const meta = engine.metadata[sIdx];
-          if (!(enabledShells[meta.shellId] ?? true)) continue;
-          const s3 = sIdx * 3;
+          const shId = shellIds[sIdx];
+          const shellEnabled =
+            shId === 0
+              ? s0
+              : shId === 1
+                ? s1
+                : shId === 2
+                  ? s2
+                  : shId === 3
+                    ? s3
+                    : s4;
+          if (!shellEnabled) continue;
+          const idx3 = sIdx * 3;
           commLinePositions[ptr++] = ox;
           commLinePositions[ptr++] = oy;
           commLinePositions[ptr++] = oz;
-          commLinePositions[ptr++] = srcPos[s3];
-          commLinePositions[ptr++] = srcPos[s3 + 1];
-          commLinePositions[ptr++] = srcPos[s3 + 2];
+          commLinePositions[ptr++] = srcPos[idx3];
+          commLinePositions[ptr++] = srcPos[idx3 + 1];
+          commLinePositions[ptr++] = srcPos[idx3 + 2];
         }
-        commLinesGeomRef.current.setAttribute(
-          'position',
-          new THREE.BufferAttribute(commLinePositions.slice(0, ptr), 3),
-        );
+        commLineAttr.needsUpdate = true;
+        commLinesGeomRef.current.setDrawRange(0, ptr / 3);
       } else {
-        commLinesGeomRef.current.setAttribute(
-          'position',
-          new THREE.BufferAttribute(new Float32Array(0), 3),
-        );
+        commLinesGeomRef.current.setDrawRange(0, 0);
       }
     }
     const b1 = performance.now();
