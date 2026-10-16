@@ -28,6 +28,8 @@ export interface WasmSimExports {
   get_sat_speed_kms: (idx: number) => number;
   get_sat_status: (idx: number) => number;
   get_sat_status_quad: (base_idx: number) => number;
+  prepare_render_buffer: () => number;
+  get_render_buffer_ptr: () => number;
   get_sat_valid: (idx: number) => number;
   get_sat_visible: (idx: number) => number;
   get_sat_elevation_deg: (idx: number) => number;
@@ -181,6 +183,9 @@ export class StarlinkSimEngine {
    */
   public satStatus: Uint8Array = new Uint8Array(0);
   public satStatusU32: Uint32Array = new Uint32Array(0);
+  private renderView: Float32Array = new Float32Array(0);
+  private renderPtr = 0;
+  private renderFloats = 0;
   public visibleCount = 0;
   public shellCounts: number[] = [0, 0, 0, 0, 0];
   public sunDirectionThree: [number, number, number] = [1, 0, 0];
@@ -347,8 +352,26 @@ export class StarlinkSimEngine {
     if (epochCount > 0) {
       this.defaultEpochUnixMs = epochSum / epochCount;
     }
+    // Render-ready positions live in wasm memory; JS bulk-copies them each frame
+    // (instead of 3 JS->wasm calls per satellite, which is very slow on Safari/JSC).
+    this.renderFloats = this.api.prepare_render_buffer();
+    this.renderPtr = this.api.get_render_buffer_ptr();
+    this.renderView = new Float32Array(0);
     this.wasmMemoryBytes = this.api.memory?.buffer?.byteLength ?? 0;
     return total;
+  }
+
+  /**
+   * Positions of all satellites in Three.js axes (x, z, -y) in Earth radii, as a view
+   * over wasm memory, valid after `propagate()`. The view is re-created if wasm memory
+   * grew (which detaches the old ArrayBuffer).
+   */
+  getRenderPositions(): Float32Array {
+    const buf = this.api.memory.buffer;
+    if (this.renderView.buffer !== buf) {
+      this.renderView = new Float32Array(buf, this.renderPtr, this.renderFloats);
+    }
+    return this.renderView;
   }
 
   updateObserver(obs: ObserverConfig): void {

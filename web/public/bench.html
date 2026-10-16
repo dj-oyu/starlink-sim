@@ -77,6 +77,20 @@
       res.ffi3PerSatMedianMs = +med(ffi).toFixed(2);
       res.ffiCalls = n * 3;
       res.ffiNsPerCall = Math.round((med(ffi) * 1e6) / (n * 3));
+      // 4) bulk path used by the renderer now: positions copied out of wasm memory in one call
+      if (a.prepare_render_buffer) {
+        const floats = a.prepare_render_buffer();
+        const ptr = a.get_render_buffer_ptr();
+        a.propagate_constellation((t += 16));
+        const dst = new Float32Array(floats);
+        const bulk = [];
+        for (let k = 0; k < 50; k++) {
+          const s = performance.now();
+          dst.set(new Float32Array(a.memory.buffer, ptr, floats));
+          bulk.push(performance.now() - s);
+        }
+        res.bulkCopyMedianMs = +med(bulk).toFixed(3);
+      }
       out.textContent = JSON.stringify(res, null, 2);
     }
 

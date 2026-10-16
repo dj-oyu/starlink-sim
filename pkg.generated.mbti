@@ -24,6 +24,8 @@ pub fn geodetic_to_ecef(Double, Double, Double) -> (Double, Double, Double)
 
 pub fn get_orbit_path_coord(Int, Int) -> Double
 
+pub fn get_render_buffer_ptr() -> Int
+
 pub fn get_sat_alt_km(Int) -> Double
 
 pub fn get_sat_azimuth_deg(Int) -> Double
@@ -93,6 +95,8 @@ pub fn normalize_rad(Double) -> Double
 pub fn parse_tle_lines(String, String) -> TleData
 
 pub let pi : Double
+
+pub fn prepare_render_buffer() -> Int
 
 pub fn propagate_constellation(Double) -> Int
 

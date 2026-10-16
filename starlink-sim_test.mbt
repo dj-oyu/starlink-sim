@@ -254,3 +254,22 @@ test "Starlink orbit stays bounded over one day of propagation" {
     t = t + 10.0
   }
 }
+
+///|
+test "render buffer is sized 3 floats per satellite and exposes a stable pointer" {
+  @starlink-sim.reset_constellation()
+  let line1 = "1 44714U 19074B   26289.17018502  .00051451  00000+0  47456-3 0  9996"
+  let line2 = "2 44714  53.1444 201.1192 0002831 127.3037 232.8238 15.67116217383094"
+  let tle = @starlink-sim.parse_tle_lines(line1, line2)
+  let _ = @starlink-sim.add_satellite_elements(
+    44714, 26, 289.17018502, 0.00047456, 53.1444, 201.1192, 0.0002831, 127.3037,
+    232.8238, 15.67116217,
+  )
+  assert_eq(@starlink-sim.prepare_render_buffer(), 3)
+  let p0 = @starlink-sim.get_render_buffer_ptr()
+  assert_true(p0 > 0)
+  let epoch_ms = @starlink-sim.jd_to_unix_ms(tle.jdsatepoch)
+  let _ = @starlink-sim.propagate_constellation(epoch_ms)
+  // propagation must write into the same buffer, not reallocate it
+  assert_eq(@starlink-sim.get_render_buffer_ptr(), p0)
+}

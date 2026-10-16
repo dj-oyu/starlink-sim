@@ -7,6 +7,9 @@ priv struct SimState {
   mut ecef_y : Array[Double]
   mut ecef_z : Array[Double]
   mut sat_status : Array[Int32]
+  // Render-ready positions (Three.js axes, Earth radii, Float32) written straight into
+  // wasm linear memory so JS can bulk-copy them instead of making 3 calls per satellite.
+  mut render_pos : FixedArray[Float]
   mut visible_indices : Array[Int32]
   mut obs_lat_deg : Double
   mut obs_lon_deg : Double
@@ -35,6 +38,7 @@ let sim_state : SimState = {
   ecef_y: [],
   ecef_z: [],
   sat_status: [],
+  render_pos: FixedArray::make(0, Float::from_double(0.0)),
   visible_indices: [],
   obs_lat_deg: 35.6762, // Tokyo default
   obs_lon_deg: 139.6503,
@@ -64,6 +68,7 @@ pub fn reset_constellation() -> Unit {
   sim_state.ecef_y = []
   sim_state.ecef_z = []
   sim_state.sat_status = []
+  sim_state.render_pos = FixedArray::make(0, Float::from_double(0.0))
   sim_state.visible_indices = []
   sim_state.visible_count = 0
 }
@@ -187,6 +192,9 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
     sat_status.length() == n else {
     return 0
   }
+  let render_pos = sim_state.render_pos
+  let write_render = render_pos.length() == n * 3
+  let inv_r = 1.0 / earth_radius_km
   let mut valid_count = 0
   let mut vis_count = 0
 
@@ -206,6 +214,13 @@ pub fn propagate_constellation(unix_ms : Double) -> Int32 {
       ecef_x.unsafe_set(i, ex)
       ecef_y.unsafe_set(i, ey)
       ecef_z.unsafe_set(i, ez)
+      if write_render {
+        // Three.js frame: (x, z, -y), in Earth radii
+        let o = i * 3
+        render_pos.unsafe_set(o, Float::from_double(ex * inv_r))
+        render_pos.unsafe_set(o + 1, Float::from_double(ez * inv_r))
+        render_pos.unsafe_set(o + 2, Float::from_double(-ey * inv_r))
+      }
       valid_count = valid_count + 1
 
       let mut status = shell_bits | 8
@@ -483,4 +498,27 @@ pub fn compute_orbit_path(
 /// Get coordinate component `comp` (0=x, 1=y, 2=z) of point `pt_idx` from the last `compute_orbit_path` call.
 pub fn get_orbit_path_coord(pt_idx : Int32, comp : Int32) -> Double {
   sim_state.orbit_path_xyz[pt_idx * 3 + comp]
+}
+
+///|
+/// Raw wasm pointer of a FixedArray[Float]; in this backend it points directly at the element data
+/// (verified: no object header precedes the first element).
+#borrow(a)
+extern "wasm" fn addr_of_floats(a : FixedArray[Float]) -> Int32 =
+  #|(func (param i32) (result i32) (local.get 0))
+
+///|
+/// Allocate the render-ready position buffer (3 Float32 per satellite). Call after all
+/// satellites are loaded (and again if the count changes). Returns the number of floats.
+pub fn prepare_render_buffer() -> Int32 {
+  let n = sim_state.satellites.length()
+  sim_state.render_pos = FixedArray::make(n * 3, Float::from_double(0.0))
+  n * 3
+}
+
+///|
+/// Byte address in wasm linear memory of the first float of the render buffer, written by
+/// `propagate_constellation`. Valid until the next `prepare_render_buffer` / `reset_constellation`.
+pub fn get_render_buffer_ptr() -> Int32 {
+  addr_of_floats(sim_state.render_pos)
 }

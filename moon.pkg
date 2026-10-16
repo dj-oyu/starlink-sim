@@ -22,6 +22,8 @@ options(
         "get_sat_elevation_deg",
         "get_sat_azimuth_deg",
         "get_sat_range_km",
+        "prepare_render_buffer",
+        "get_render_buffer_ptr",
         "get_visible_count",
         "get_visible_sat_index",
         "get_sat_satnum",

@@ -4,7 +4,6 @@ import { useFrame, useThree, RenderPerfStats } from '../fiber/PreactFiber';
 import {
   StarlinkSimEngine,
   ObserverConfig,
-  EARTH_RADIUS_KM,
   latLonAltToThree,
   SatelliteTelemetry,
 } from '../wasm/simEngine';
@@ -596,7 +595,6 @@ export function ConstellationView({
     // 2. SWAR 4-sat-at-once status readout + single-pass WebGL buffer sync
     const b0 = performance.now();
     const api = engine.api;
-    const invR = 1.0 / EARTH_RADIUS_KM;
     const satStatus = engine.satStatus;
     const satStatusU32 = engine.satStatusU32;
     const quadLen = satStatusU32.length;
@@ -607,6 +605,7 @@ export function ConstellationView({
     }
 
     const dstPos = posAttr.array as Float32Array;
+    dstPos.set(engine.getRenderPositions()); // one memcpy instead of 3 wasm calls per satellite
     const dstStyle = styleAttr.array as Float32Array;
     const hasSearch = searchMatchIndices !== null;
     const obsEnabled = observer.enabled;
@@ -636,12 +635,9 @@ export function ConstellationView({
       }
 
       const i3 = i * 3;
-      const px = api.get_sat_ecef_x(i) * invR;
-      const py = api.get_sat_ecef_z(i) * invR;
-      const pz = -api.get_sat_ecef_y(i) * invR;
-      dstPos[i3] = px;
-      dstPos[i3 + 1] = py;
-      dstPos[i3 + 2] = pz;
+      const px = dstPos[i3];
+      const py = dstPos[i3 + 1];
+      const pz = dstPos[i3 + 2];
       const t6 = i * 6;
       trailPos[t6] = px - trailDir[i3] * TRAIL_LEN; // tail
       trailPos[t6 + 1] = py - trailDir[i3 + 1] * TRAIL_LEN;
