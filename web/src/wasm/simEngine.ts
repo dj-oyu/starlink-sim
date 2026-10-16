@@ -255,6 +255,7 @@ export class StarlinkSimEngine {
   public gpuMode = GPU_PARAM === true;
   /** Full-pass time measured at startup for the automatic path choice (ms); null if forced by URL. */
   public fullPassCalibrationMs: number | null = null;
+  private pathChosen = false;
   /** Per-satellite anchors for the GPU: x y z (km) vx vy vz (km/s) in TEME, 6 floats each. */
   public anchorPV: Float32Array = new Float32Array(0);
   /** Anchor times in seconds since `anchorBaseMs` (float32; re-based to stay small). */
@@ -322,16 +323,24 @@ export class StarlinkSimEngine {
     this.api = instance.exports as unknown as WasmSimExports;
 
     const tleText = await tleRes.text();
+    // (the position path is chosen inside loadTleDataset, once satellites exist)
     this.loadTleDataset(tleText);
+  }
 
-    // Pick the position path: slow engines (e.g. iOS Safari runs this wasm ~20x slower) use the
-    // GPU path. One-time cost: 4 full passes (~1 ms each on desktop, ~70 ms on the phone).
-    if (GPU_PARAM === null && this.count > 0) {
-      this.fullPassCalibrationMs = this.measureFullPassMs();
-      if (this.fullPassCalibrationMs > GPU_AUTO_THRESHOLD_MS) {
-        this.gpuMode = true;
-        this.setupGpuBuffers(this.count);
-      }
+  /**
+   * Pick the position path once, the first time satellites are loaded (the TLE may arrive late,
+   * e.g. downloaded by the app on a fresh clone): slow engines (iOS Safari runs this wasm ~20x
+   * slower) use the GPU path. One-time cost: 4 full passes (~1 ms each on desktop, ~70 ms on the
+   * phone). `?gpu=0/1` skips the measurement.
+   */
+  private choosePath(): void {
+    if (this.pathChosen || this.count === 0) return;
+    this.pathChosen = true;
+    if (GPU_PARAM !== null) return;
+    this.fullPassCalibrationMs = this.measureFullPassMs();
+    if (this.fullPassCalibrationMs > GPU_AUTO_THRESHOLD_MS) {
+      this.gpuMode = true;
+      this.setupGpuBuffers(this.count);
     }
     // Calibration propagated at "now"; make the first real frame a consistent full pass again
     this.forceFullPass = true;
@@ -489,6 +498,7 @@ export class StarlinkSimEngine {
     this.renderPtr = this.api.get_render_buffer_ptr();
     this.renderView = new Float32Array(0);
     this.wasmMemoryBytes = this.api.memory?.buffer?.byteLength ?? 0;
+    this.choosePath();
     return total;
   }
 

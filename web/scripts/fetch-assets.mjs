@@ -81,9 +81,13 @@ async function fetchTle() {
     await save(dest, text);
     console.log(`[assets] downloaded data/starlink.tle (${(text.length / 1024) | 0} KB)`);
   } catch (e) {
-    // A failed refresh must not break a working setup that already has a TLE file.
-    if (!have) failed = true;
-    console.error(`[assets] ${have ? 'kept existing' : 'FAILED'} data/starlink.tle: ${e.message}`);
+    // Never fail the build over the TLE: with an existing file we keep it; without one the app
+    // downloads the TLE itself on first load (CelesTrak also limits repeated downloads to one
+    // per ~2 hours per IP, so a 403 here is expected right after another download).
+    console.error(
+      `[assets] ${have ? 'kept existing' : 'skipped'} data/starlink.tle: ${e.message}` +
+        (have ? '' : '\n[assets] (not fatal: the app fetches the TLE on first load; re-run `npm run fetch:assets -- --only=tle` later to cache it)'),
+    );
   }
 }
 

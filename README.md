@@ -59,7 +59,7 @@ moon fmt && moon info
 
 ## 外部素材と TLE(初回起動時に自動取得)
 
-次のファイルは出典・再配布条件の都合でリポジトリに含めていません(`.gitignore` 済み)。`npm run dev` / `npm run build` の前に `web/scripts/fetch-assets.mjs` が自動で取得します。存在するファイルは再取得しません。
+次のファイルは出典・再配布条件の都合でリポジトリに含めていません(`.gitignore` 済み)。`npm run dev` / `npm run build` の前に `web/scripts/fetch-assets.mjs` が自動で取得します。存在するファイルは再取得しません。TLE の取得に失敗してもビルドは失敗せず(CelesTrak の再取得制限に当たることがあります)、アプリが初回の読み込み時に自分で TLE を取得します。
 
 | 素材 | 取得元 |
 |---|---|
