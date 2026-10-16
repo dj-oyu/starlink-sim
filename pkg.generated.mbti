@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "username/starlink-sim"
+package "dj-oyu/starlink-sim"
 
 // Values
 pub fn add_satellite_elements(Int, Int, Double, Double, Double, Double, Double, Double, Double, Double) -> Int
