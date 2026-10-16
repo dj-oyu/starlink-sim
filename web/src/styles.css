@@ -747,3 +747,7 @@ label,
 .fab {
   touch-action: manipulation;
 }
+
+.chip {
+  white-space: nowrap;
+}

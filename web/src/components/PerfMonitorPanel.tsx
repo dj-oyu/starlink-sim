@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { collectDeviceInfo, copyText } from '../util/clipboard';
 import { FullPerfSnapshot } from './ConstellationView';
 
 export type PerfListener = (perf: FullPerfSnapshot) => void;
@@ -17,6 +18,8 @@ export function PerfMonitorPanel({
   onClose,
 }: PerfMonitorPanelProps) {
   const [copied, setCopied] = useState(false);
+  // Shown when automatic copying is blocked (e.g. some browsers): select-and-copy by hand
+  const [manualText, setManualText] = useState<string | null>(null);
 
   const fpsValRef = useRef<HTMLDivElement>(null);
   const minFpsValRef = useRef<HTMLDivElement>(null);
@@ -173,7 +176,7 @@ export function PerfMonitorPanel({
     return subscribePerf(applyPerf);
   }, [subscribePerf, latestPerfRef]);
 
-  const handleCopyReport = () => {
+  const handleCopyReport = async () => {
     const perf = latestPerfRef.current;
     const totalCpuWorkMs =
       perf.wasmPureSgp4Ms +
@@ -183,6 +186,7 @@ export function PerfMonitorPanel({
     const budgetUsagePct = Math.min(100, (totalCpuWorkMs / 16.667) * 100);
     const report = {
       timestamp: new Date().toISOString(),
+      device: collectDeviceInfo(),
       satellitesTracked: satCount,
       fps: Number(perf.fps.toFixed(1)),
       minFps: Number(perf.minFps.toFixed(1)),
@@ -211,9 +215,14 @@ export function PerfMonitorPanel({
         jsHeapUsedMB: perf.jsHeapMb ? Number(perf.jsHeapMb.toFixed(2)) : null,
       },
     };
-    navigator.clipboard?.writeText(JSON.stringify(report, null, 2));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    const text = JSON.stringify(report, null, 2);
+    const ok = await copyText(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } else {
+      setManualText(text);
+    }
   };
 
   return (
@@ -409,6 +418,28 @@ export function PerfMonitorPanel({
           </div>
         </div>
       </div>
+      {manualText !== null && (
+        <div className="modal-backdrop" onClick={() => setManualText(null)}>
+          <div
+            className="hud-panel modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="section-header">
+              <span>自動コピーできませんでした。下のテキストを選択してコピーしてください</span>
+              <button className="btn" onClick={() => setManualText(null)}>
+                ✕
+              </button>
+            </div>
+            <textarea
+              className="tle-textarea"
+              readOnly
+              value={manualText}
+              onFocus={(e) => (e.target as HTMLTextAreaElement).select()}
+              style={{ height: '260px' }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
