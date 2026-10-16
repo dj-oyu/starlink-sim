@@ -38,9 +38,11 @@ const ThreeContext = createContext<ThreeContextState | null>(null);
 const HITCH_N = 32;
 const hitchBuf = new Float32Array(HITCH_N * 4);
 let hitchTotal = 0;
+let touchStarts = 0; // number of pointerdown gestures on the canvas (to see whether input happened)
 
 export function readHitches(): {
   total: number;
+  touchStarts: number;
   recent: { ageSec: number; frameMs: number; sinceInputMs: number | null; phase3s: number }[];
 } {
   const now = performance.now();
@@ -55,7 +57,7 @@ export function readHitches(): {
       phase3s: Math.round(hitchBuf[o + 3]),
     });
   }
-  return { total: hitchTotal, recent };
+  return { total: hitchTotal, touchStarts, recent };
 }
 
 /** Live handle to the renderer/scene for tools outside the canvas tree (e.g. the GPU bench). */
@@ -214,8 +216,9 @@ export function Canvas({
 
     // Remember when the user last interacted (touch / drag / wheel) for the hitch log
     let lastInputAt = -1e9;
-    const markInput = () => {
+    const markInput = (e: Event) => {
       lastInputAt = performance.now();
+      if (e.type === 'pointerdown') touchStarts++;
     };
     const inputEvents = ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'touchstart', 'touchmove'];
     for (const ev of inputEvents) {
