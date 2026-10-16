@@ -1,0 +1,428 @@
+///|
+/// Initialized SGP4 satellite record with precomputed secular and periodic coefficients.
+pub struct SatRec {
+  satnum : Int32
+  jdsatepoch : Double
+  bstar : Double
+  inclo : Double
+  nodeo : Double
+  ecco : Double
+  argpo : Double
+  mo : Double
+  no_kozai : Double
+  no_unkozai : Double
+  a : Double
+  alta : Double
+  altp : Double
+  con41 : Double
+  cc1 : Double
+  cc4 : Double
+  cc5 : Double
+  d2 : Double
+  d3 : Double
+  d4 : Double
+  delmo : Double
+  eta : Double
+  argpdot : Double
+  omgcof : Double
+  xmcof : Double
+  sinmao : Double
+  t2cof : Double
+  t3cof : Double
+  t4cof : Double
+  t5cof : Double
+  x1mth2 : Double
+  x7thm1 : Double
+  mdot : Double
+  nodedot : Double
+  xlcof : Double
+  aycof : Double
+  nodecf : Double
+  isimp : Bool
+  shell_id : Int32
+}
+
+///|
+/// Classify Starlink orbital shell from inclination (deg) and altitude (km):
+/// 0: ~53 deg (Main Shell)
+/// 1: ~43 deg (Mid-inclination Shell)
+/// 2: ~70 deg (High-inclination Shell)
+/// 3: ~97.6 deg (Polar / Sun-Synchronous Shell)
+/// 4: Very Low / Deorbiting / Orbit Raising (< 480 km)
+pub fn classify_shell(inclo_rad : Double, alt_km : Double) -> Int32 {
+  if alt_km < 450.0 {
+    return 4
+  }
+  let inc_deg = inclo_rad * rad_to_deg
+  if inc_deg > 85.0 {
+    3
+  } else if inc_deg > 62.0 {
+    2
+  } else if inc_deg < 48.0 {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+/// Initialize SGP4 satellite record from TleData (Vallado AIAA 2006-6753 SGP4 init).
+pub fn sgp4_init(tle : TleData) -> SatRec {
+  let x2o3 = 2.0 / 3.0
+  let eccsq = tle.ecco * tle.ecco
+  let omeosq = 1.0 - eccsq
+  let rteosq = @math.pow(omeosq, 0.5)
+  let cosio = @math.cos(tle.inclo)
+  let cosio2 = cosio * cosio
+
+  // Un-Kozai the mean motion
+  let ak = @math.pow(xke / tle.no_kozai, x2o3)
+  let d1 = 0.75 * j2 * (3.0 * cosio2 - 1.0) / (rteosq * omeosq)
+  let mut del_ = d1 / (ak * ak)
+  let adel = ak *
+    (1.0 - del_ * del_ - del_ * (1.0 / 3.0 + 134.0 * del_ * del_ / 81.0))
+  del_ = d1 / (adel * adel)
+  let no_unkozai = tle.no_kozai / (1.0 + del_)
+
+  let ao = @math.pow(xke / no_unkozai, x2o3)
+  let sinio = @math.sin(tle.inclo)
+  let po = ao * omeosq
+  let con42 = 1.0 - 5.0 * cosio2
+  let con41 = -con42 - cosio2 - cosio2
+  let posq = po * po
+  let rp = ao * (1.0 - tle.ecco)
+
+  let alta = ao * (1.0 + tle.ecco) - 1.0
+  let altp = rp - 1.0
+
+  // SGP4 atmospheric density parameter s and qoms2t
+  let mut sfour = 78.0 / earth_radius_km + 1.0
+  let mut qzms24 = @math.pow((120.0 - 78.0) / earth_radius_km, 4.0)
+  let perige = (rp - 1.0) * earth_radius_km
+
+  if perige < 156.0 {
+    sfour = perige - 78.0
+    if perige < 98.0 {
+      sfour = 20.0
+    }
+    qzms24 = @math.pow((120.0 - sfour) / earth_radius_km, 4.0)
+    sfour = sfour / earth_radius_km + 1.0
+  }
+
+  let pinvsq = 1.0 / posq
+  let tsi = 1.0 / (ao - sfour)
+  let eta = ao * tle.ecco * tsi
+  let etasq = eta * eta
+  let eeta = tle.ecco * eta
+  let psisq = (1.0 - etasq).abs()
+  let coef = qzms24 * @math.pow(tsi, 4.0)
+  let coef1 = coef / @math.pow(psisq, 3.5)
+  let cc2 = coef1 *
+    no_unkozai *
+    (
+      ao * (1.0 + 1.5 * etasq + eeta * (4.0 + etasq)) +
+      0.375 * j2 * tsi / psisq * con41 * (8.0 + 3.0 * etasq * (8.0 + etasq))
+    )
+  let cc1 = tle.bstar * cc2
+  let mut cc3 = 0.0
+  if tle.ecco > 1.0e-4 {
+    cc3 = -2.0 * coef * tsi * j3oj2 * no_unkozai * sinio / tle.ecco
+  }
+  let x1mth2 = 1.0 - cosio2
+  let cc4 = 2.0 *
+    no_unkozai *
+    coef1 *
+    ao *
+    omeosq *
+    (
+      eta * (2.0 + 0.5 * etasq) +
+      tle.ecco * (0.5 + 2.0 * etasq) -
+      j2 *
+      tsi /
+      (ao * psisq) *
+      (
+        -3.0 * con41 * (1.0 - 2.0 * eeta + etasq * (1.5 - 0.5 * eeta)) +
+        0.75 *
+        x1mth2 *
+        (2.0 * etasq - eeta * (1.0 + etasq)) *
+        @math.cos(2.0 * tle.argpo)
+      )
+    )
+  let cc5 = 2.0 *
+    coef1 *
+    ao *
+    omeosq *
+    (1.0 + 2.75 * (etasq + eeta) + eeta * etasq)
+
+  let cosio4 = cosio2 * cosio2
+  let temp1 = 1.5 * j2 * pinvsq * no_unkozai
+  let temp2 = 0.5 * temp1 * j2 * pinvsq
+  let temp3 = -0.46875 * j4 * pinvsq * pinvsq * no_unkozai
+  let mdot = no_unkozai +
+    0.5 * temp1 * rteosq * con41 +
+    0.0625 * temp2 * rteosq * (13.0 - 78.0 * cosio2 + 137.0 * cosio4)
+  let argpdot = -0.5 * temp1 * con42 +
+    0.0625 * temp2 * (7.0 - 114.0 * cosio2 + 395.0 * cosio4) +
+    temp3 * (3.0 - 36.0 * cosio2 + 49.0 * cosio4)
+  let xhdot1 = -temp1 * cosio
+  let nodedot = xhdot1 +
+    (0.5 * temp2 * (4.0 - 19.0 * cosio2) + 2.0 * temp3 * (3.0 - 7.0 * cosio2)) *
+    cosio
+  let omgcof = tle.bstar * cc3 * @math.cos(tle.argpo)
+  let mut xmcof = 0.0
+  if tle.ecco > 1.0e-4 {
+    xmcof = -x2o3 * coef * tle.bstar / eeta
+  }
+  let nodecf = 3.5 * omeosq * xhdot1 * cc1
+  let t2cof = 1.5 * cc1
+  let xlcof = if (cosio + 1.0).abs() > 1.5e-12 {
+    -0.25 * j3oj2 * sinio * (3.0 + 5.0 * cosio) / (1.0 + cosio)
+  } else {
+    -0.25 * j3oj2 * sinio * (3.0 + 5.0 * cosio) / 1.5e-12
+  }
+  let aycof = -0.5 * j3oj2 * sinio
+  let delmo = @math.pow(1.0 + eta * @math.cos(tle.mo), 3.0)
+  let sinmao = @math.sin(tle.mo)
+  let x7thm1 = 7.0 * cosio2 - 1.0
+
+  // Check for perigee < 220 km (isimp = true skips higher-order drag terms)
+  let isimp = rp < 220.0 / earth_radius_km + 1.0
+  let mut d2 = 0.0
+  let mut d3 = 0.0
+  let mut d4 = 0.0
+  let mut t3cof = 0.0
+  let mut t4cof = 0.0
+  let mut t5cof = 0.0
+
+  if !isimp {
+    let cc1sq = cc1 * cc1
+    d2 = 4.0 * ao * tsi * cc1sq
+    let temp = d2 * tsi * cc1 / 3.0
+    d3 = (17.0 * ao + sfour) * temp
+    d4 = 0.5 * temp * ao * tsi * (221.0 * ao + 31.0 * sfour) * cc1
+    t3cof = d2 + 2.0 * cc1sq
+    t4cof = 0.25 * (3.0 * d3 + cc1 * (12.0 * d2 + 10.0 * cc1sq))
+    t5cof = 0.2 *
+      (
+        3.0 * d4 +
+        12.0 * cc1 * d3 +
+        6.0 * d2 * d2 +
+        15.0 * cc1sq * (2.0 * d2 + cc1sq)
+      )
+  }
+  let mean_alt_km = (ao - 1.0) * earth_radius_km
+  let shell_id = classify_shell(tle.inclo, mean_alt_km)
+
+  {
+    satnum: tle.satnum,
+    jdsatepoch: tle.jdsatepoch,
+    bstar: tle.bstar,
+    inclo: tle.inclo,
+    nodeo: tle.nodeo,
+    ecco: tle.ecco,
+    argpo: tle.argpo,
+    mo: tle.mo,
+    no_kozai: tle.no_kozai,
+    no_unkozai,
+    a: ao,
+    alta,
+    altp,
+    con41,
+    cc1,
+    cc4,
+    cc5,
+    d2,
+    d3,
+    d4,
+    delmo,
+    eta,
+    argpdot,
+    omgcof,
+    xmcof,
+    sinmao,
+    t2cof,
+    t3cof,
+    t4cof,
+    t5cof,
+    x1mth2,
+    x7thm1,
+    mdot,
+    nodedot,
+    xlcof,
+    aycof,
+    nodecf,
+    isimp,
+    shell_id,
+  }
+}
+
+///|
+/// Propagate initialized SGP4 satellite record by `tsince` minutes from TLE epoch.
+/// Returns `(rx_km, ry_km, rz_km, vx_kms, vy_kms, vz_kms, ok)` in the TEME coordinate frame.
+pub fn sgp4_propagate(
+  sat : SatRec,
+  tsince : Double,
+) -> (Double, Double, Double, Double, Double, Double, Bool) {
+  let x2o3 = 2.0 / 3.0
+  let vkmpersec = earth_radius_km * xke / 60.0
+
+  // Update for secular gravity and atmospheric drag
+  let xmdf = sat.mo + sat.mdot * tsince
+  let argpdf = sat.argpo + sat.argpdot * tsince
+  let nodedf = sat.nodeo + sat.nodedot * tsince
+  let mut argpm = argpdf
+  let mut mm = xmdf
+  let t2 = tsince * tsince
+  let nodem = nodedf + sat.nodecf * t2
+  let mut tempa = 1.0 - sat.cc1 * tsince
+  let mut tempe = sat.bstar * sat.cc4 * tsince
+  let mut templ = sat.t2cof * t2
+
+  if !sat.isimp {
+    let delomg = sat.omgcof * tsince
+    let delmtemp = 1.0 + sat.eta * @math.cos(xmdf)
+    let delm = sat.xmcof * (delmtemp * delmtemp * delmtemp - sat.delmo)
+    let temp = delomg + delm
+    mm = xmdf + temp
+    argpm = argpdf - temp
+    let t3 = t2 * tsince
+    let t4 = t3 * tsince
+    tempa = tempa - sat.d2 * t2 - sat.d3 * t3 - sat.d4 * t4
+    tempe = tempe + sat.bstar * sat.cc5 * (@math.sin(mm) - sat.sinmao)
+    templ = templ + sat.t3cof * t3 + t4 * (sat.t4cof + tsince * sat.t5cof)
+  }
+
+  let nm_init = sat.no_unkozai
+  let mut em = sat.ecco
+  let inclm = sat.inclo
+
+  if nm_init <= 0.0 {
+    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+  }
+
+  let am = @math.pow(xke / nm_init, x2o3) * tempa * tempa
+  let nm = xke / @math.pow(am, 1.5)
+  em = em - tempe
+
+  if em >= 1.0 || em < -0.001 {
+    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+  }
+  if em < 1.0e-6 {
+    em = 1.0e-6
+  }
+
+  mm = mm + nm_init * templ
+  let xlm = mm + argpm + nodem
+  let nodem_norm = normalize_rad(nodem)
+  let argpm_norm = normalize_rad(argpm)
+  let xlm_norm = normalize_rad(xlm)
+  let mm_norm = normalize_rad(xlm_norm - argpm_norm - nodem_norm)
+
+  let sinim = @math.sin(inclm)
+  let cosim = @math.cos(inclm)
+
+  // Add lunar-solar periodics (zero for Near-Earth LEO)
+  let ep = em
+  let xincp = inclm
+  let argpp = argpm_norm
+  let nodep = nodem_norm
+  let mp = mm_norm
+
+  if ep <= 0.0 || ep >= 1.0 {
+    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+  }
+
+  // Long period periodics
+  let axnl = ep * @math.cos(argpp)
+  let temp = 1.0 / (am * (1.0 - ep * ep))
+  let aynl = ep * @math.sin(argpp) + temp * sat.aycof
+  let xl = mp + argpp + nodep + temp * sat.xlcof * axnl
+
+  // Solve Kepler's equation for (u = xl - nodep)
+  let u = normalize_rad(xl - nodep)
+  let mut eo1 = u
+  let mut tem5 = 9999.9
+  let mut ktr = 1
+  let mut sineo1 = 0.0
+  let mut coseo1 = 0.0
+
+  while tem5.abs() >= 1.0e-12 && ktr <= 10 {
+    sineo1 = @math.sin(eo1)
+    coseo1 = @math.cos(eo1)
+    tem5 = 1.0 - coseo1 * axnl - sineo1 * aynl
+    tem5 = (u - aynl * coseo1 + axnl * sineo1 - eo1) / tem5
+    if tem5.abs() >= 0.95 {
+      tem5 = if tem5 > 0.0 { 0.95 } else { -0.95 }
+    }
+    eo1 = eo1 + tem5
+    ktr = ktr + 1
+  }
+  sineo1 = @math.sin(eo1)
+  coseo1 = @math.cos(eo1)
+
+  // Short period preliminary quantities
+  let ecose = axnl * coseo1 + aynl * sineo1
+  let esine = axnl * sineo1 - aynl * coseo1
+  let el2 = axnl * axnl + aynl * aynl
+  let pl = am * (1.0 - el2)
+  if pl < 0.0 {
+    return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false)
+  }
+
+  let rl = am * (1.0 - ecose)
+  let rdotl = @math.pow(am, 0.5) * esine / rl
+  let rvdotl = @math.pow(pl, 0.5) / rl
+  let betal = @math.pow(1.0 - el2, 0.5)
+  let temp_sp = esine / (1.0 + betal)
+  let sinu = am / rl * (sineo1 - aynl - axnl * temp_sp)
+  let cosu = am / rl * (coseo1 - axnl + aynl * temp_sp)
+  let mut su = @math.atan2(sinu, cosu)
+  if su < 0.0 {
+    su = su + two_pi
+  }
+  let sin2u = (cosu + cosu) * sinu
+  let cos2u = 1.0 - 2.0 * sinu * sinu
+  let temp_pl = 1.0 / pl
+  let temp1_sp = 0.5 * j2 * temp_pl
+  let temp2_sp = temp1_sp * temp_pl
+
+  // Update for short period periodics
+  let mrt = rl * (1.0 - 1.5 * temp2_sp * betal * sat.con41) +
+    0.5 * temp1_sp * sat.x1mth2 * cos2u
+  let su_corr = su - 0.25 * temp2_sp * sat.x7thm1 * sin2u
+  let xnode = nodep + 1.5 * temp2_sp * cosim * sin2u
+  let xinc = xincp + 1.5 * temp2_sp * cosim * sinim * cos2u
+  let mvt = rdotl - nm * temp1_sp * sat.x1mth2 * sin2u / xke
+  let rvdot = rvdotl +
+    nm * temp1_sp * (sat.x1mth2 * cos2u + 1.5 * sat.con41) / xke
+
+  // Orientation vectors
+  let sinsu = @math.sin(su_corr)
+  let cossu = @math.cos(su_corr)
+  let snod = @math.sin(xnode)
+  let cnod = @math.cos(xnode)
+  let sini = @math.sin(xinc)
+  let cosi = @math.cos(xinc)
+  let xmx = -snod * cosi
+  let xmy = cnod * cosi
+  let ux = xmx * sinsu + cnod * cossu
+  let uy = xmy * sinsu + snod * cossu
+  let uz = sini * sinsu
+  let vx_u = xmx * cossu - cnod * sinsu
+  let vy_u = xmy * cossu - snod * sinsu
+  let vz_u = sini * cossu
+
+  // Position (km) and Velocity (km/s) in TEME frame
+  let rx = mrt * ux * earth_radius_km
+  let ry = mrt * uy * earth_radius_km
+  let rz = mrt * uz * earth_radius_km
+  let vx = (mvt * ux + rvdot * vx_u) * vkmpersec
+  let vy = (mvt * uy + rvdot * vy_u) * vkmpersec
+  let vz = (mvt * uz + rvdot * vz_u) * vkmpersec
+
+  if mrt < 1.0 {
+    return (rx, ry, rz, vx, vy, vz, false)
+  }
+
+  (rx, ry, rz, vx, vy, vz, true)
+}

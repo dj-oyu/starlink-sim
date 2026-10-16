@@ -1,0 +1,39 @@
+import {
+  "moonbitlang/core/math",
+}
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "reset_constellation",
+        "add_satellite_elements",
+        "get_satellite_count",
+        "set_observer",
+        "propagate_constellation",
+        "get_sat_ecef_x",
+        "get_sat_ecef_y",
+        "get_sat_ecef_z",
+        "get_sat_speed_kms",
+        "get_sat_valid",
+        "get_sat_visible",
+        "get_sat_elevation_deg",
+        "get_sat_azimuth_deg",
+        "get_sat_range_km",
+        "get_visible_count",
+        "get_sat_satnum",
+        "get_sat_shell",
+        "get_sat_inclination_deg",
+        "get_sat_lat_deg",
+        "get_sat_lon_deg",
+        "get_sat_alt_km",
+        "get_sun_ecef_x",
+        "get_sun_ecef_y",
+        "get_sun_ecef_z",
+        "compute_orbit_path",
+        "get_orbit_path_coord",
+      ],
+      "export-memory-name": "memory",
+    },
+  },
+)

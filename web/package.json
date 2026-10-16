@@ -1,0 +1,25 @@
+{
+  "name": "starlink-sim-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "moon -C .. build --target wasm --release && node -e \"fs.copyFileSync('../_build/wasm/release/build/starlink-sim.wasm', 'public/assets/wasm/starlink-sim.wasm')\"",
+    "dev": "npm run build:wasm && vite",
+    "build": "npm run build:wasm && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.114.0",
+    "@react-three/fiber": "^8.17.10",
+    "lucide-preact": "^0.454.0",
+    "preact": "^10.24.3",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.9.1",
+    "@types/three": "^0.169.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

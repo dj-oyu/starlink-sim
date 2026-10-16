@@ -1,0 +1,183 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/starlink-sim"
+
+// Values
+pub fn add_satellite_elements(Int, Int, Double, Double, Double, Double, Double, Double, Double, Double) -> Int
+
+pub fn calendar_to_jd(Int, Int, Int, Int, Int, Double) -> Double
+
+pub fn classify_shell(Double, Double) -> Int
+
+pub fn compute_look_angles(Double, Double, Double, Double, Double, Double) -> (Double, Double, Double)
+
+pub fn compute_orbit_path(Int, Double, Double, Int, Int) -> Int
+
+pub let deg_to_rad : Double
+
+pub let earth_radius_km : Double
+
+pub fn ecef_to_geodetic(Double, Double, Double) -> (Double, Double, Double)
+
+pub fn geodetic_to_ecef(Double, Double, Double) -> (Double, Double, Double)
+
+pub fn get_orbit_path_coord(Int, Int) -> Double
+
+pub fn get_sat_alt_km(Int) -> Double
+
+pub fn get_sat_azimuth_deg(Int) -> Double
+
+pub fn get_sat_ecef_x(Int) -> Double
+
+pub fn get_sat_ecef_y(Int) -> Double
+
+pub fn get_sat_ecef_z(Int) -> Double
+
+pub fn get_sat_elevation_deg(Int) -> Double
+
+pub fn get_sat_inclination_deg(Int) -> Double
+
+pub fn get_sat_lat_deg(Int) -> Double
+
+pub fn get_sat_lon_deg(Int) -> Double
+
+pub fn get_sat_range_km(Int) -> Double
+
+pub fn get_sat_satnum(Int) -> Int
+
+pub fn get_sat_shell(Int) -> Int
+
+pub fn get_sat_speed_kms(Int) -> Double
+
+pub fn get_sat_valid(Int) -> Int
+
+pub fn get_sat_visible(Int) -> Int
+
+pub fn get_satellite_count() -> Int
+
+pub fn get_sun_ecef_x() -> Double
+
+pub fn get_sun_ecef_y() -> Double
+
+pub fn get_sun_ecef_z() -> Double
+
+pub fn get_visible_count() -> Int
+
+pub fn gstime(Double) -> Double
+
+pub let half_pi : Double
+
+pub let j2 : Double
+
+pub let j3 : Double
+
+pub let j3oj2 : Double
+
+pub let j4 : Double
+
+pub fn jd_to_unix_ms(Double) -> Double
+
+pub let minutes_per_day : Double
+
+pub let mu_earth : Double
+
+pub fn normalize_rad(Double) -> Double
+
+pub fn parse_tle_lines(String, String) -> TleData
+
+pub let pi : Double
+
+pub fn propagate_constellation(Double) -> Int
+
+pub let rad_to_deg : Double
+
+pub fn reset_constellation() -> Unit
+
+pub let seconds_per_day : Double
+
+pub fn set_observer(Double, Double, Double, Double, Int) -> Unit
+
+pub fn sgp4_init(TleData) -> SatRec
+
+pub fn sgp4_propagate(SatRec, Double) -> (Double, Double, Double, Double, Double, Double, Bool)
+
+pub fn sun_direction_ecef(Double) -> (Double, Double, Double)
+
+pub fn teme_to_ecef(Double, Double, Double, Double) -> (Double, Double, Double)
+
+pub fn tle_epoch_to_jd(Int, Double) -> Double
+
+pub let two_pi : Double
+
+pub fn unix_ms_to_jd(Double) -> Double
+
+pub let wgs84_a : Double
+
+pub let wgs84_e2 : Double
+
+pub let wgs84_f : Double
+
+pub let xke : Double
+
+// Errors
+
+// Types and methods
+pub struct SatRec {
+  satnum : Int
+  jdsatepoch : Double
+  bstar : Double
+  inclo : Double
+  nodeo : Double
+  ecco : Double
+  argpo : Double
+  mo : Double
+  no_kozai : Double
+  no_unkozai : Double
+  a : Double
+  alta : Double
+  altp : Double
+  con41 : Double
+  cc1 : Double
+  cc4 : Double
+  cc5 : Double
+  d2 : Double
+  d3 : Double
+  d4 : Double
+  delmo : Double
+  eta : Double
+  argpdot : Double
+  omgcof : Double
+  xmcof : Double
+  sinmao : Double
+  t2cof : Double
+  t3cof : Double
+  t4cof : Double
+  t5cof : Double
+  x1mth2 : Double
+  x7thm1 : Double
+  mdot : Double
+  nodedot : Double
+  xlcof : Double
+  aycof : Double
+  nodecf : Double
+  isimp : Bool
+  shell_id : Int
+}
+
+pub struct TleData {
+  satnum : Int
+  epoch_year : Int
+  epoch_days : Double
+  jdsatepoch : Double
+  bstar : Double
+  inclo : Double
+  nodeo : Double
+  ecco : Double
+  argpo : Double
+  mo : Double
+  no_kozai : Double
+}
+pub fn TleData::from_elements(Int, Int, Double, Double, Double, Double, Double, Double, Double, Double) -> Self
+
+// Type aliases
+
+// Traits
