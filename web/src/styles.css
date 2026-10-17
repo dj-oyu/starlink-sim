@@ -1052,3 +1052,11 @@ label,
     display: none;
   }
 }
+
+/* Perf panel diagnostics / bench dialogs: no backdrop blur (a large blur surface over the live WebGL canvas) */
+.perf-flat,
+.perf-flat.hud-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(7, 11, 22, 0.92);
+}

@@ -2,6 +2,16 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { collectDeviceInfo, copyText } from '../util/clipboard';
 import { FullPerfSnapshot } from './ConstellationView';
 
+/**
+ * Diagnostics for the panel's own cost on phones (`?pp=noblur,frozen,hz1,mini,nochart`): the open
+ * panel is a large backdrop-filter surface repainted 4x a second over the animating WebGL canvas.
+ */
+const PP = new Set(
+  (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('pp') ?? '' : '')
+    .split(',')
+    .filter(Boolean),
+);
+
 export type PerfListener = (perf: FullPerfSnapshot) => void;
 
 interface PerfMonitorPanelProps {
@@ -82,7 +92,11 @@ export function PerfMonitorPanel({
     let smoothedAllocKbPerSec = 0;
     let gcSweepCount = 0;
 
+    let tick = 0;
     const applyPerf = (perf: FullPerfSnapshot) => {
+      tick++;
+      if (PP.has('frozen') && tick > 1) return;
+      if (PP.has('hz1') && tick > 1 && tick % 4 !== 0) return;
       const nowMs = performance.now();
       const dtSec = Math.max(0.05, (nowMs - prevTimeMs) / 1000);
       prevTimeMs = nowMs;
@@ -254,7 +268,7 @@ export function PerfMonitorPanel({
 
   return (
     <div
-      className="hud-panel"
+      className={`hud-panel${PP.has('noblur') ? ' perf-flat' : ''}`}
       style={{
         width: '100%',
         flexShrink: 0,
@@ -318,6 +332,8 @@ export function PerfMonitorPanel({
         </div>
       </div>
 
+      {!PP.has('mini') && (
+      <>
       {/* Stacked Frame Budget Bar (out of 16.67ms) */}
       <div>
         <div
@@ -407,7 +423,11 @@ export function PerfMonitorPanel({
         </div>
       </div>
 
+      </>
+      )}
+
       {/* Real-time Sparkline */}
+      {!PP.has('mini') && !PP.has('nochart') && (
       <div
         style={{
           background: 'rgba(15, 23, 42, 0.75)',
@@ -436,7 +456,10 @@ export function PerfMonitorPanel({
         />
       </div>
 
+      )}
+
       {/* WebGL GPU & Memory Telemetry */}
+      {!PP.has('mini') && (
       <div className="telemetry-grid">
         <div className="telemetry-box">
           <span className="field-label">DRAW CALLS / FRAME</span>
@@ -459,9 +482,10 @@ export function PerfMonitorPanel({
           </div>
         </div>
       </div>
+      )}
       {benchMsg !== null && (
-        <div className="modal-backdrop">
-          <div className="hud-panel modal-card">
+        <div className="modal-backdrop perf-flat">
+          <div className="hud-panel modal-card perf-flat">
             <div className="section-header">
               <span>GPU ベンチ実行中 (約 40 秒)</span>
             </div>
@@ -473,9 +497,9 @@ export function PerfMonitorPanel({
         </div>
       )}
       {manualText !== null && (
-        <div className="modal-backdrop" onClick={() => setManualText(null)}>
+        <div className="modal-backdrop perf-flat" onClick={() => setManualText(null)}>
           <div
-            className="hud-panel modal-card"
+            className="hud-panel modal-card perf-flat"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="section-header">
