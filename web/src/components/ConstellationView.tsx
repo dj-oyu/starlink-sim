@@ -38,6 +38,8 @@ interface ConstellationViewProps {
   pointsRef: { current: THREE.Points | null };
   earthMeshRef: { current: THREE.Mesh | null };
   viewCommandsRef?: { current: ViewCommands | null };
+  /** Pixels to shift the rendered view up (keeps the globe centred above a bottom sheet). */
+  viewShiftRef?: { current: number };
   showTrails?: boolean;
   onFrameStats: (
     simTimeMs: number,
@@ -84,6 +86,7 @@ const _flyQPart = new THREE.Quaternion();
 const _flyQId = new THREE.Quaternion();
 const _flyDir = new THREE.Vector3();
 const _origin = new THREE.Vector3(0, 0, 0);
+const _viewSize = new THREE.Vector2();
 
 /** Camera distance that fits the whole globe in the viewport (portrait screens sit further back). */
 function fitCameraDistance(
@@ -279,6 +282,7 @@ export function ConstellationView({
   pointsRef,
   earthMeshRef,
   viewCommandsRef,
+  viewShiftRef,
   showTrails = true,
   onFrameStats,
 }: ConstellationViewProps) {
@@ -299,6 +303,7 @@ export function ConstellationView({
   const trailStateRef = useRef({ prevSimMs: NaN });
   const gpuFrameRef = useRef({ t: 0, cosG: 1, sinG: 0 });
   const gpuRevRef = useRef(-1);
+  const viewShiftState = useRef({ cur: 0, applied: 0, w: 0, h: 0 });
   const styleCtxRef = useRef<{
     shellMask: number;
     search: Set<number> | null | undefined;
@@ -752,6 +757,28 @@ export function ConstellationView({
 
   useFrame((threeState, delta) => {
     if (satCount === 0) return;
+
+    // Ease the view shift (a bottom sheet opened/closed/resized) and apply it as a projection
+    // window offset: the scene moves up by `cur` px without touching the camera or the controls
+    // (picking uses the same projection, so taps still hit what is drawn).
+    {
+      const vs = viewShiftState.current;
+      const target = viewShiftRef?.current ?? 0;
+      vs.cur += (target - vs.cur) * Math.min(1, delta * 10);
+      if (Math.abs(target - vs.cur) < 0.4) vs.cur = target;
+      renderer.getSize(_viewSize);
+      if (vs.cur !== vs.applied || _viewSize.x !== vs.w || _viewSize.y !== vs.h) {
+        if (vs.cur === 0) {
+          camera.clearViewOffset();
+        } else {
+          (camera as THREE.PerspectiveCamera).setViewOffset(_viewSize.x, _viewSize.y, 0, vs.cur, _viewSize.x, _viewSize.y);
+        }
+        camera.updateProjectionMatrix();
+        vs.applied = vs.cur;
+        vs.w = _viewSize.x;
+        vs.h = _viewSize.y;
+      }
+    }
 
     const fl = flightRef.current;
     if (fl.active) {

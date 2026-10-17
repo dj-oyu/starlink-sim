@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import * as THREE from 'three';
 import { Canvas, threeHandleRef } from './fiber/PreactFiber';
 import { runGpuBench } from './util/gpuBench';
+import { useMediaQuery } from './util/useMediaQuery';
+import {
+  SatInspectorBody,
+  SatInspectorTitle,
+  SatSheet,
+  SheetState,
+} from './components/SatInspector';
 import {
   StarlinkSimEngine,
   ObserverConfig,
@@ -20,10 +27,16 @@ import {
   PerfListener,
 } from './components/PerfMonitorPanel';
 import {
+  Activity,
+  ChevronsDown,
+  ChevronsUp,
   Crosshair,
+  Database,
   House,
+  Layers,
   Rotate3d,
   LocateFixed,
+  Menu,
   Minus,
   Plus,
   Search,
@@ -52,6 +65,11 @@ const SPEED_OPTIONS = [-1000, -100, -10, -1, 1, 10, 60, 300, 1000];
 
 const sharedDateUtc = new Date();
 const sharedDateJst = new Date();
+
+/** "Tokyo (東京)" -> "東京", "Starbase TX" -> "Starbase" */
+function stationShortName(name: string): string {
+  return name.match(/\(([^)]+)\)/)?.[1] ?? name.split(' ')[0];
+}
 
 function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n);
@@ -288,6 +306,18 @@ export function App() {
   const lastDatetimeMinRef = useRef(-1);
   const [showPerfPanel, setShowPerfPanel] = useState(false);
   const [showDisplayMenu, setShowDisplayMenu] = useState(false);
+  // Phone layout: the selected satellite's details live in a bottom sheet (collapsed / half / full)
+  const isNarrow = useMediaQuery('(max-width: 900px)');
+  const [sheetState, setSheetState] = useState<SheetState>('peek');
+  const hudRootRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const timebarRef = useRef<HTMLElement>(null);
+  const sheetElRef = useRef<HTMLElement | null>(null);
+  const topInRangeChipRef = useRef<HTMLSpanElement>(null);
+  const [timebarCollapsed, setTimebarCollapsed] = useState(false);
+  const [layout, setLayout] = useState({ rootTop: 8, rootH: 700, timebarH: 150, headerBottom: 86 });
+  /** How far (px) the 3D view is shifted up so the globe is centred in the area the sheet leaves free. */
+  const viewShiftRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(false); // bottom sheet on narrow screens
   useEffect(() => {
     if (!showDisplayMenu) return;
@@ -447,6 +477,74 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedSatIndex]);
 
+  // --- Bottom sheet (phones) -------------------------------------------------------------------
+  const sheetVisible = isNarrow && selectedTelemetry !== null;
+  const sheetFull = sheetVisible && sheetState === 'full';
+  const sheetH =
+    sheetState === 'peek'
+      ? 72
+      : sheetState === 'half'
+        ? Math.max(120, Math.round(layout.rootH * 0.42))
+        : Math.max(120, layout.rootH - layout.timebarH - 8);
+
+  // A newly selected satellite starts collapsed
+  useEffect(() => {
+    setSheetState('peek');
+  }, [selectedSatIndex]);
+
+  // The expanded sheet replaces the header: close anything the header opened
+  useEffect(() => {
+    if (sheetFull) {
+      setShowDisplayMenu(false);
+      setSidebarOpen(false);
+    }
+  }, [sheetFull]);
+
+  // Measure the HUD (re-measured when its parts resize or the viewport changes)
+  useEffect(() => {
+    const root = hudRootRef.current;
+    if (!root) return;
+    const measure = () => {
+      const r = root.getBoundingClientRect();
+      const next = {
+        rootTop: Math.round(r.top),
+        rootH: Math.round(r.height),
+        timebarH: Math.round(timebarRef.current?.getBoundingClientRect().height ?? 150),
+        headerBottom: Math.round(headerRef.current?.getBoundingClientRect().bottom ?? 86),
+      };
+      setLayout((prev) =>
+        prev.rootTop === next.rootTop &&
+        prev.rootH === next.rootH &&
+        prev.timebarH === next.timebarH &&
+        prev.headerBottom === next.headerBottom
+          ? prev
+          : next,
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    if (timebarRef.current) ro.observe(timebarRef.current);
+    if (headerRef.current) ro.observe(headerRef.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [engine]);
+
+  // Shift the 3D view so the globe is centred in the free area between the header and the sheet
+  // (collapsed / half). Hidden header (full sheet) or no sheet: no shift.
+  useEffect(() => {
+    if (!sheetVisible || sheetFull) {
+      viewShiftRef.current = 0;
+      return;
+    }
+    const sheetTop = layout.rootTop + layout.rootH - layout.timebarH - 8 - sheetH;
+    const freeCentre = (layout.headerBottom + sheetTop) / 2;
+    viewShiftRef.current = Math.max(0, Math.round(window.innerHeight / 2 - freeCentre));
+  }, [sheetVisible, sheetFull, sheetH, layout]);
+
   // On-device GPU benchmark (Perf panel): needs to change the app's visual settings between runs
   const runGpuBenchFromPanel = async (onProgress: (msg: string) => void) => {
     const handle = threeHandleRef.current;
@@ -476,6 +574,11 @@ export function App() {
       topInRangeRef.current.textContent = observer.enabled
         ? `${visCount} sats`
         : 'OFF';
+    }
+    if (topInRangeChipRef.current) {
+      topInRangeChipRef.current.textContent = observer.enabled
+        ? `${stationShortName(observer.name)} · 視界内 ${visCount}機`
+        : '地上局 OFF';
     }
     if (topFpsRef.current) {
       topFpsRef.current.textContent = `${perf.fps.toFixed(0)} FPS`;
@@ -511,6 +614,7 @@ export function App() {
   };
 
   const handleCanvasClick = (raycaster: THREE.Raycaster, e: MouseEvent) => {
+    if (isNarrow && sheetState !== 'peek') setSheetState('peek');
     const earthHits = earthMeshRef.current
       ? raycaster.intersectObject(earthMeshRef.current, false)
       : [];
@@ -683,6 +787,7 @@ export function App() {
             visualSettings={visualSettings}
             pointsRef={pointsRef}
             viewCommandsRef={viewCommandsRef}
+            viewShiftRef={viewShiftRef}
             showTrails={showTrails}
             earthMeshRef={earthMeshRef}
             onFrameStats={handleFrameStats}
@@ -690,9 +795,19 @@ export function App() {
         </Canvas>
       </div>
 
-      <div className="hud-root">
+      <div
+        className={`hud-root ${sheetVisible && sheetState !== 'peek' ? 'hud-sheet-expanded' : ''}`}
+        ref={hudRootRef}
+        style={{
+          '--timebar-h': `${layout.timebarH}px`,
+          '--sheet-h': sheetVisible && !sheetFull ? `${sheetH + 8}px` : '0px',
+        }}
+      >
       {/* TOP TELEMETRY & VISUAL MODE BAR */}
-      <header className="hud-panel top-bar">
+      <header
+        ref={headerRef}
+        className={`hud-panel top-bar ${sheetFull ? 'top-bar--hidden' : ''}`}
+      >
         <div className="brand-block">
           <div className="brand-title">
             <span>🛰️ STARLINK SGP4 SIMULATOR</span>
@@ -732,16 +847,32 @@ export function App() {
             className={`btn only-narrow ${sidebarOpen ? 'active' : ''}`}
             onClick={() => setSidebarOpen((v) => !v)}
             aria-expanded={sidebarOpen}
+            aria-label="パネル (検索・地上局・軌道シェル)"
+            title="パネル"
           >
-            ☰ パネル
+            <Menu size={18} />
+          </button>
+          <button
+            className="status-chip only-narrow"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="地上局のパネルを開く"
+          >
+            <span ref={topInRangeChipRef}>
+              {observer.enabled
+                ? `${stationShortName(observer.name)} · 視界内 ${engine.visibleCount}機`
+                : '地上局 OFF'}
+            </span>
           </button>
           <div className="menu-anchor">
             <button
               className={`btn ${showDisplayMenu ? 'active' : ''}`}
               onClick={() => setShowDisplayMenu((v) => !v)}
               aria-expanded={showDisplayMenu}
+              aria-label="表示設定"
+              title="表示設定"
             >
-              🎛️ Display ▾
+              <Layers size={18} />
+              <span className="btn-label">Display ▾</span>
             </button>
             {showDisplayMenu && (
               <div className="hud-panel menu-popover">
@@ -803,11 +934,20 @@ export function App() {
           <button
             className={`btn ${showPerfPanel ? 'active-emerald' : ''}`}
             onClick={() => setShowPerfPanel((p) => !p)}
+            aria-label="パフォーマンス (Perf Stats)"
+            title="Perf Stats"
           >
-            📊 Perf Stats
+            <Activity size={18} />
+            <span className="btn-label">Perf Stats</span>
           </button>
-          <button className="btn" onClick={() => setShowTleModal(true)}>
-            📥 TLE Data
+          <button
+            className="btn"
+            onClick={() => setShowTleModal(true)}
+            aria-label="TLEデータ"
+            title="TLE Data"
+          >
+            <Database size={18} />
+            <span className="btn-label">TLE Data</span>
           </button>
         </div>
       </header>
@@ -1056,120 +1196,23 @@ export function App() {
         />
       )}
 
-      {/* RIGHT INSPECTOR PANEL (SELECTED SATELLITE TELEMETRY) */}
-      {selectedTelemetry && (
-        <aside
-          className="hud-panel right-inspector"
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
+      {/* RIGHT INSPECTOR PANEL (SELECTED SATELLITE TELEMETRY) - wide screens */}
+      {selectedTelemetry && !isNarrow && (
+        <aside className="hud-panel right-inspector">
+          <SatInspectorTitle
+            t={selectedTelemetry}
+            onClose={() => {
+              setSelectedSatIndex(null);
+              setFollowSelected(false);
             }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  color: '#fde047',
-                }}
-              >
-                🛰️ {selectedTelemetry.name}
-              </div>
-              <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                NORAD #{selectedTelemetry.satnum} · COSPAR{' '}
-                {selectedTelemetry.intlDesig || 'N/A'}
-              </div>
-            </div>
-            <button
-              className="btn"
-              onClick={() => {
-                setSelectedSatIndex(null);
-                setFollowSelected(false);
-              }}
-            >
-              ✕
-            </button>
-          </div>
-
-          <div
-            style={{
-              fontSize: '11px',
-              padding: '4px 8px',
-              borderRadius: '5px',
-              background: 'rgba(56, 189, 248, 0.14)',
-              color: '#7dd3fc',
-            }}
-          >
-            {selectedTelemetry.shellLabel}
-          </div>
-
-          <div className="telemetry-grid">
-            <div className="telemetry-box">
-              <span className="field-label">ALTITUDE (高度)</span>
-              <div className="telemetry-val">
-                {selectedTelemetry.altKm.toFixed(2)} km
-              </div>
-            </div>
-            <div className="telemetry-box">
-              <span className="field-label">VELOCITY (速度)</span>
-              <div className="telemetry-val">
-                {selectedTelemetry.speedKms.toFixed(3)} km/s
-              </div>
-            </div>
-            <div className="telemetry-box">
-              <span className="field-label">LATITUDE (緯度)</span>
-              <div className="telemetry-val">
-                {selectedTelemetry.latDeg.toFixed(4)}°
-              </div>
-            </div>
-            <div className="telemetry-box">
-              <span className="field-label">LONGITUDE (経度)</span>
-              <div className="telemetry-val">
-                {selectedTelemetry.lonDeg.toFixed(4)}°
-              </div>
-            </div>
-            <div className="telemetry-box">
-              <span className="field-label">ELEVATION (仰角)</span>
-              <div
-                className="telemetry-val"
-                style={{
-                  color: selectedTelemetry.visible ? '#34d399' : '#94a3b8',
-                }}
-              >
-                {selectedTelemetry.visible
-                  ? `${selectedTelemetry.elevationDeg.toFixed(1)}° (VISIBLE)`
-                  : 'Below FOV'}
-              </div>
-            </div>
-            <div className="telemetry-box">
-              <span className="field-label">SLANT RANGE (距離)</span>
-              <div className="telemetry-val">
-                {selectedTelemetry.visible
-                  ? `${selectedTelemetry.rangeKm.toFixed(0)} km`
-                  : '---'}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button
-              className={`btn ${followSelected ? 'active' : ''}`}
-              style={{ flex: 1, justifyContent: 'center' }}
-              onClick={() => setFollowSelected((f) => !f)}
-            >
-              {followSelected ? '🎥 Tracking Satellite' : '🎥 Follow Camera'}
-            </button>
-            <button
-              className={`btn ${showGroundTrack ? 'active' : ''}`}
-              style={{ flex: 1, justifyContent: 'center' }}
-              onClick={() => setShowGroundTrack((g) => !g)}
-            >
-              〰️ Ground Track
-            </button>
-          </div>
+          />
+          <SatInspectorBody
+            t={selectedTelemetry}
+            followSelected={followSelected}
+            showGroundTrack={showGroundTrack}
+            onToggleFollow={() => setFollowSelected((f) => !f)}
+            onToggleGroundTrack={() => setShowGroundTrack((g) => !g)}
+          />
         </aside>
       )}
       </div>
@@ -1237,7 +1280,18 @@ export function App() {
       </div>
 
       {/* BOTTOM TIME-TRAVEL CONTROL BAR */}
-      <footer className="hud-panel bottom-timebar">
+      <footer
+        ref={timebarRef}
+        className={`hud-panel bottom-timebar ${timebarCollapsed ? 'bottom-timebar--collapsed' : ''}`}
+      >
+        <button
+          className="icon-btn timebar-toggle only-narrow"
+          aria-label={timebarCollapsed ? '時間操作を展開' : '時間操作を折りたたむ'}
+          aria-expanded={!timebarCollapsed}
+          onClick={() => setTimebarCollapsed((v) => !v)}
+        >
+          {timebarCollapsed ? <ChevronsUp size={18} /> : <ChevronsDown size={18} />}
+        </button>
         <div className="timebar-top">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
@@ -1257,7 +1311,7 @@ export function App() {
               🔴 LIVE (現在時刻)
             </button>
             <button
-              className="btn"
+              className="btn btn-epoch"
               onClick={() => handleJumpToTime(engine.defaultEpochUnixMs)}
               title="Jump to TLE Snapshot Epoch"
             >
@@ -1367,6 +1421,24 @@ export function App() {
           />
         </div>
       </footer>
+
+      {sheetVisible && selectedTelemetry && (
+        <SatSheet
+          t={selectedTelemetry}
+          state={sheetState}
+          heightPx={sheetH}
+          onStateChange={setSheetState}
+          onClose={() => {
+            setSelectedSatIndex(null);
+            setFollowSelected(false);
+          }}
+          sheetRef={sheetElRef}
+          followSelected={followSelected}
+          showGroundTrack={showGroundTrack}
+          onToggleFollow={() => setFollowSelected((f) => !f)}
+          onToggleGroundTrack={() => setShowGroundTrack((g) => !g)}
+        />
+      )}
       </div>
 
       {/* TLE DATASET MODAL */}
