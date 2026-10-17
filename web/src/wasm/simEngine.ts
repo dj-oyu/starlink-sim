@@ -565,11 +565,8 @@ export class StarlinkSimEngine {
    * that this staleness stays below `MAX_STALE_KM` at the current playback speed (so fast
    * playback and time jumps always use a full pass).
    */
-  /** Diagnostics only (Stall Bisect): skip all propagation work. */
-  public debugFreeze = false;
-
   propagate(unixMs: number, timeScale = 1, isPlaying = true): void {
-    if (!this.api || this.debugFreeze) return;
+    if (!this.api) return;
     if (this.gpuMode) {
       this.propagateGpu(unixMs, timeScale, isPlaying);
       return;

@@ -2,18 +2,6 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { collectDeviceInfo, copyText } from '../util/clipboard';
 import { FullPerfSnapshot } from './ConstellationView';
 
-/**
- * The panel keeps the glass look (backdrop blur) but draws its children flat (no nested translucent
- * boxes, see `.perf-lite`). Diagnostics: `?pp=flat` (no blur, opaque background), `nested` (boxed
- * children again), `frozen`, `hz1`, `mini`, `nochart`. NOTE: the earlier "blur causes stalls"
- * conclusion was confounded by the phone's thermal/charging state; this is a look/cost preference.
- */
-const PP = new Set(
-  (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('pp') ?? '' : '')
-    .split(',')
-    .filter(Boolean),
-);
-
 export type PerfListener = (perf: FullPerfSnapshot) => void;
 
 interface PerfMonitorPanelProps {
@@ -23,7 +11,6 @@ interface PerfMonitorPanelProps {
   onClose: () => void;
   /** Runs the on-device GPU benchmark; resolves to the report object. */
   onRunGpuBench?: (onProgress: (msg: string) => void) => Promise<Record<string, unknown>>;
-  onRunStallBisect?: (onProgress: (msg: string) => void) => Promise<Record<string, unknown>>;
 }
 
 export function PerfMonitorPanel({
@@ -32,7 +19,6 @@ export function PerfMonitorPanel({
   satCount,
   onClose,
   onRunGpuBench,
-  onRunStallBisect,
 }: PerfMonitorPanelProps) {
   const [copied, setCopied] = useState(false);
   // Shown when automatic copying is blocked (e.g. some browsers): select-and-copy by hand
@@ -94,11 +80,7 @@ export function PerfMonitorPanel({
     let smoothedAllocKbPerSec = 0;
     let gcSweepCount = 0;
 
-    let tick = 0;
     const applyPerf = (perf: FullPerfSnapshot) => {
-      tick++;
-      if (PP.has('frozen') && tick > 1) return;
-      if (PP.has('hz1') && tick > 1 && tick % 4 !== 0) return;
       const nowMs = performance.now();
       const dtSec = Math.max(0.05, (nowMs - prevTimeMs) / 1000);
       prevTimeMs = nowMs;
@@ -199,11 +181,11 @@ export function PerfMonitorPanel({
     return subscribePerf(applyPerf);
   }, [subscribePerf, latestPerfRef]);
 
-  const handleGpuBench = async (run = onRunGpuBench) => {
-    if (!run || benchMsg !== null) return;
+  const handleGpuBench = async () => {
+    if (!onRunGpuBench || benchMsg !== null) return;
     setBenchMsg('準備中…');
     try {
-      const report = await run((m) => setBenchMsg(m));
+      const report = await onRunGpuBench((m) => setBenchMsg(m));
       setModalCopied(false);
       setManualText(JSON.stringify(report, null, 2));
     } catch (e: any) {
@@ -270,7 +252,7 @@ export function PerfMonitorPanel({
 
   return (
     <div
-      className={`hud-panel${PP.has('flat') ? ' perf-flat' : ''}${PP.has('nested') ? '' : ' perf-lite'}`}
+      className="hud-panel perf-lite"
       style={{
         width: '100%',
         flexShrink: 0,
@@ -284,17 +266,8 @@ export function PerfMonitorPanel({
         <span>📊 Render & Wasm SGP4 Profiler</span>
         <div style={{ display: 'flex', gap: '5px' }}>
           {onRunGpuBench && (
-            <button className="chip" onClick={() => handleGpuBench()} disabled={benchMsg !== null}>
+            <button className="chip" onClick={handleGpuBench} disabled={benchMsg !== null}>
               🧪 GPU Bench
-            </button>
-          )}
-          {onRunStallBisect && (
-            <button
-              className="chip"
-              onClick={() => handleGpuBench(onRunStallBisect)}
-              disabled={benchMsg !== null}
-            >
-              🔬 Stall Bisect
             </button>
           )}
           <button className="chip" onClick={handleCopyReport}>
@@ -334,8 +307,6 @@ export function PerfMonitorPanel({
         </div>
       </div>
 
-      {!PP.has('mini') && (
-      <>
       {/* Stacked Frame Budget Bar (out of 16.67ms) */}
       <div>
         <div
@@ -425,11 +396,7 @@ export function PerfMonitorPanel({
         </div>
       </div>
 
-      </>
-      )}
-
       {/* Real-time Sparkline */}
-      {!PP.has('mini') && !PP.has('nochart') && (
       <div
         style={{
           background: 'rgba(15, 23, 42, 0.75)',
@@ -458,10 +425,7 @@ export function PerfMonitorPanel({
         />
       </div>
 
-      )}
-
       {/* WebGL GPU & Memory Telemetry */}
-      {!PP.has('mini') && (
       <div className="telemetry-grid">
         <div className="telemetry-box">
           <span className="field-label">DRAW CALLS / FRAME</span>
@@ -484,7 +448,6 @@ export function PerfMonitorPanel({
           </div>
         </div>
       </div>
-      )}
       {benchMsg !== null && (
         <div className="modal-backdrop perf-flat">
           <div className="hud-panel modal-card perf-flat">

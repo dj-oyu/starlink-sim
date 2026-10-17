@@ -52,8 +52,6 @@ export interface ThreeContextState {
   controls: OrbitControls;
   perfStats: RenderPerfStats;
   registerFrame: (cb: FrameCallback) => () => void;
-  /** Diagnostics (Stall Bisect): when true the loop skips controls and all frame callbacks. */
-  debugSkipCallbacks: boolean;
   /** Draws one frame the way the main loop does (through the post pass when it is on). */
   renderFrame: () => void;
 }
@@ -138,11 +136,8 @@ export function Canvas({
       powerPreference: 'high-performance',
       alpha: false,
     });
-    // Cap at 3 (an iPhone's native ratio). The stalls seen at dpr 3 only happened with the Perf panel
-    // open (its charts + DOM updates; ~1-2 hitches/s of <= 28 ms with it open, none without), so
-    // normal use is clean at 3 (measured on an iPhone 17 Pro Max, 60x follow). `?dpr=N` overrides.
-    const dprParam = Number(new URLSearchParams(location.search).get('dpr')) || 0;
-    renderer.setPixelRatio(dprParam > 0 ? dprParam : Math.min(window.devicePixelRatio || 1, 3));
+    // Cap at 3: an iPhone's native ratio (3x cost only ~0.35 ms of GPU time vs 2x on an iPhone 17 Pro Max)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
     renderer.setSize(width, height);
     // linear output: see util/rawColor.ts
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -185,7 +180,6 @@ export function Canvas({
       controls,
       perfStats,
       registerFrame,
-      debugSkipCallbacks: false,
       renderFrame: () => {
         if (postFxOnRef.current) {
           post ??= new PostFx();
@@ -247,18 +241,6 @@ export function Canvas({
     let ftCount = 0;
     let ftPtr = 0;
 
-    // `?stat=1`: tiny live stall counter (rAF intervals > 28 ms over the last 5 s), for bisecting on-device; also shown with `?cut=`
-    let statEl: HTMLDivElement | null = null;
-    const statHits: number[] = [];
-    let statMax = 0;
-    let statNext = 0;
-    const qs = new URLSearchParams(location.search);
-    if (qs.get('stat') === '1' || qs.has('cut')) {
-      statEl = document.createElement('div');
-      statEl.style.cssText =
-        'position:fixed;left:6px;bottom:6px;z-index:99999;pointer-events:none;font:12px/1.3 ui-monospace,monospace;color:#fde047;background:rgba(0,0,0,.6);padding:3px 6px;border-radius:6px';
-      document.body.appendChild(statEl);
-    }
     let prevEnd = performance.now();
     let prevCpu = 0;
     let prevEvents = 0;
@@ -274,16 +256,6 @@ export function Canvas({
       lastTime = now;
 
       const hitchPending = dtMs > 28 && dtMs < 3000;
-      if (statEl) {
-        if (hitchPending) statHits.push(now);
-        statMax = Math.max(statMax, dtMs < 3000 ? dtMs : 0);
-        while (statHits.length && now - statHits[0] > 5000) statHits.shift();
-        if (now >= statNext) {
-          statNext = now + 1000;
-          statEl.textContent = `stall ${(statHits.length / 5).toFixed(1)}/s  max ${statMax.toFixed(0)}ms  fps ${perfStats.fps.toFixed(0)}`;
-          statMax = 0;
-        }
-      }
       if (dtMs > 0 && dtMs < 500) {
         const instFps = 1000 / dtMs;
         smoothedFps = smoothedFps * 0.9 + instFps * 0.1;
@@ -299,12 +271,10 @@ export function Canvas({
         perfStats.frameTimeMs = dtMs;
       }
 
-      if (!state.debugSkipCallbacks) {
-        controls.update();
-        const listeners = frameListenersRef.current;
-        for (let i = 0; i < listeners.length; i++) {
-          listeners[i](state, delta);
-        }
+      controls.update();
+      const listeners = frameListenersRef.current;
+      for (let i = 0; i < listeners.length; i++) {
+        listeners[i](state, delta);
       }
 
       renderer.info.reset(); // two render calls per frame with the post pass: count both
@@ -346,7 +316,6 @@ export function Canvas({
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('click', onClick);
-      statEl?.remove();
       controls.dispose();
       post?.dispose();
       renderer.dispose();

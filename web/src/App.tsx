@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import * as THREE from 'three';
 import { Canvas, threeHandleRef } from './fiber/PreactFiber';
-import { runGpuBench, runStallBisect } from './util/gpuBench';
+import { runGpuBench } from './util/gpuBench';
 import { useMediaQuery } from './util/useMediaQuery';
 import {
   SatInspectorBody,
@@ -18,7 +18,6 @@ import {
 } from './wasm/simEngine';
 import {
   ConstellationView,
-  EarthOnly,
   FullPerfSnapshot,
   ViewCommands,
 } from './components/ConstellationView';
@@ -77,17 +76,6 @@ function stationShortName(name: string): string {
 }
 
 /** Diagnostics: `?cut=hud,cv` leaves out the HUD / the constellation (Earth only) to bisect stalls on-device. */
-const QS = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
-/** Diagnostics: `?speed=60&sel=1000&follow=1` starts at 60x with satellite #1000 selected and followed. */
-const INIT_SPEED = Number(QS.get('speed')) || 1;
-const INIT_SEL = QS.has('sel') ? Number(QS.get('sel')) : null;
-const INIT_FOLLOW = QS.get('follow') === '1' && INIT_SEL !== null;
-const CUT = new Set(
-  (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('cut') ?? '' : '')
-    .split(',')
-    .filter(Boolean),
-);
-
 function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n);
 }
@@ -291,7 +279,7 @@ export function App() {
   const simTimeMsRef = useRef<number>(Date.now());
   const anchorTimeMsRef = useRef<number>(Date.now());
   const [isPlaying, setIsPlaying] = useState(true);
-  const [timeScale, setTimeScale] = useState(INIT_SPEED);
+  const [timeScale, setTimeScale] = useState(1);
 
   // Direct DOM refs for high-frequency HUD readouts
   const topInRangeRef = useRef<HTMLSpanElement>(null);
@@ -326,10 +314,8 @@ export function App() {
     true,
   ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSatIndex, setSelectedSatIndex] = useState<number | null>(
-    INIT_SEL !== null && Number.isFinite(INIT_SEL) ? INIT_SEL : null,
-  );
-  const [followSelected, setFollowSelected] = useState(INIT_FOLLOW);
+  const [selectedSatIndex, setSelectedSatIndex] = useState<number | null>(null);
+  const [followSelected, setFollowSelected] = useState(false);
   const [showGroundTrack, setShowGroundTrack] = useState(true);
 
   // Ground Station Observer
@@ -618,30 +604,6 @@ export function App() {
     });
   };
 
-  // Real-app stall bisect (Perf panel): runs with one feature off at a time
-  const runStallBisectFromPanel = async (onProgress: (msg: string) => void) => {
-    const handle = threeHandleRef.current;
-    if (!handle) throw new Error('renderer not ready');
-    const frames2 = () =>
-      new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-    return runStallBisect({
-      handle,
-      settings: visualSettings,
-      applySettings: async (next) => {
-        setVisualSettings(next);
-        await frames2();
-      },
-      setPostFx: async (on) => {
-        setPostFx(on);
-        await frames2();
-      },
-      setFrozen: (f) => {
-        if (engine) engine.debugFreeze = f;
-      },
-      onProgress,
-    });
-  };
-
   const handleFrameStats = (
     simTimeMs: number,
     visCount: number,
@@ -861,9 +823,6 @@ export function App() {
           postFx={postFx}
           onCanvasClick={handleCanvasClick}
         >
-          {CUT.has('cv') ? (
-            <EarthOnly visualSettings={visualSettings} earthMeshRef={earthMeshRef} />
-          ) : (
           <ConstellationView
             engine={engine}
             simTimeMsRef={simTimeMsRef}
@@ -884,12 +843,9 @@ export function App() {
             earthMeshRef={earthMeshRef}
             onFrameStats={handleFrameStats}
           />
-          )}
         </Canvas>
       </div>
 
-      {!CUT.has('hud') && (
-      <>
       <div
         className={`hud-root ${sheetVisible && sheetState !== 'peek' ? 'hud-sheet-expanded' : ''}`}
         ref={hudRootRef}
@@ -1305,7 +1261,6 @@ export function App() {
           satCount={engine.count}
           onClose={() => setShowPerfPanel(false)}
           onRunGpuBench={runGpuBenchFromPanel}
-          onRunStallBisect={runStallBisectFromPanel}
         />
       )}
 
@@ -1630,8 +1585,6 @@ export function App() {
             </div>
           </div>
         </div>
-      )}
-      </>
       )}
     </div>
   );

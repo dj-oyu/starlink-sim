@@ -1061,8 +1061,8 @@ label,
   background: rgba(7, 11, 22, 0.92);
 }
 
-/* `?pp=lite`: no nested boxes inside the panel (children keep their layout but draw no backgrounds,
-   borders, radii or shadows), to test whether the nested translucent layers add to the blur cost */
+/* Perf panel: no nested boxes inside it (children keep their layout but draw no backgrounds,
+   borders, radii or shadows) so the panel is one glass surface instead of stacked translucent layers */
 .perf-lite * {
   background: transparent !important;
   border-color: transparent !important;
