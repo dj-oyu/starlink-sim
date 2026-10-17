@@ -91,7 +91,7 @@ export class PostFx {
       this.target?.dispose();
       this.target = new THREE.WebGLRenderTarget(w, h, {
         type: THREE.HalfFloatType,
-        samples: 4,
+        samples: 2, // 4x cost ~3 ms of fixed overhead on an iPhone at dpr 3
         depthBuffer: true,
         generateMipmaps: false,
         minFilter: THREE.LinearFilter,
