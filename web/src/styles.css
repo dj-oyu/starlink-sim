@@ -390,6 +390,12 @@
   gap: 12px;
 }
 
+.datetime-input {
+  width: 175px;
+  font-size: 11px;
+  padding: 4px 7px;
+}
+
 .timeline-slider {
   flex: 1;
   accent-color: var(--accent-cyan);
@@ -411,6 +417,9 @@
 .modal-card {
   width: 540px;
   max-width: 92vw;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -546,8 +555,9 @@
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  max-height: 320px;
+  max-height: min(320px, 55dvh);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -688,10 +698,24 @@
     align-items: stretch;
   }
 
+  /* Panels share the space between header and time bar: they may shrink (flex-shrink) and
+     scroll inside, instead of overflowing the screen when several are open. */
+  .hud-middle {
+    overflow: hidden;
+    /* gutter for the round camera buttons (they stay in the padding box's right edge), so panels
+       never slide underneath them */
+    padding-right: 52px;
+  }
+
   .left-sidebar {
     display: none;
     width: 100%;
-    max-height: 55%;
+    max-height: 70%;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     align-self: auto !important;
   }
 
@@ -702,7 +726,11 @@
   .right-column {
     order: -1;
     width: 100%;
-    max-height: 40%;
+    max-height: 100%;
+    flex: 0 1 auto;
+    min-height: 0;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .map-controls {
@@ -710,9 +738,33 @@
     bottom: auto;
   }
 
+  /* Anchor the Display menu to the header (full width) instead of to its button: the button sits
+     near the left edge on a phone, so a button-anchored 250px menu ran off-screen. */
+  .menu-anchor {
+    position: static;
+  }
+
   .menu-popover {
-    right: 0;
-    width: min(250px, calc(100vw - 32px));
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+  }
+
+  /* One-row time controls: drop the +/-24 h captions, let the date field shrink */
+  .slider-label {
+    display: none;
+  }
+
+  .timeline-slider {
+    min-width: 60px;
+  }
+
+  .datetime-input {
+    flex: 0 1 190px;
+    width: auto;
+    min-width: 0;
   }
 
   .time-readout {

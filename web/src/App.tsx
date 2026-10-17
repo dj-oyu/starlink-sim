@@ -1316,7 +1316,10 @@ export function App() {
         </div>
 
         <div className="timeline-slider-row">
-          <span style={{ fontSize: '11px', color: '#94a3b8', minWidth: '58px' }}>
+          <span
+            className="slider-label"
+            style={{ fontSize: '11px', color: '#94a3b8', minWidth: '58px' }}
+          >
             -24 Hours
           </span>
           <input
@@ -1337,6 +1340,7 @@ export function App() {
             }}
           />
           <span
+            className="slider-label"
             style={{
               fontSize: '11px',
               color: '#94a3b8',
@@ -1350,8 +1354,7 @@ export function App() {
           <input
             ref={datetimeInputRef}
             type="datetime-local"
-            className="input-text"
-            style={{ width: '175px', fontSize: '11px', padding: '4px 7px' }}
+            className="input-text datetime-input"
             defaultValue={toDatetimeLocalValue(simTimeMsRef.current)}
             onChange={(e) => {
               const val = (e.target as HTMLInputElement).value;
