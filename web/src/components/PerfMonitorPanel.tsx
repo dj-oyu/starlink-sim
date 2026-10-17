@@ -3,9 +3,10 @@ import { collectDeviceInfo, copyText } from '../util/clipboard';
 import { FullPerfSnapshot } from './ConstellationView';
 
 /**
- * The open panel is a large backdrop-filter surface repainted 4x a second over the animating WebGL
- * canvas; on an iPhone (dpr 3, 60x follow) that cost ~12 stalls/s, ~3/s without the blur, so it is
- * drawn flat by default. Diagnostics: `?pp=blur,lite,frozen,hz1,mini,nochart` (blur = the old look; lite = flat children).
+ * The panel keeps the glass look (backdrop blur) but draws its children flat (no nested translucent
+ * boxes, see `.perf-lite`). Diagnostics: `?pp=flat` (no blur, opaque background), `nested` (boxed
+ * children again), `frozen`, `hz1`, `mini`, `nochart`. NOTE: the earlier "blur causes stalls"
+ * conclusion was confounded by the phone's thermal/charging state; this is a look/cost preference.
  */
 const PP = new Set(
   (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('pp') ?? '' : '')
@@ -269,7 +270,7 @@ export function PerfMonitorPanel({
 
   return (
     <div
-      className={`hud-panel${PP.has('blur') ? '' : ' perf-flat'}${PP.has('lite') ? ' perf-lite' : ''}`}
+      className={`hud-panel${PP.has('flat') ? ' perf-flat' : ''}${PP.has('nested') ? '' : ' perf-lite'}`}
       style={{
         width: '100%',
         flexShrink: 0,
