@@ -23,6 +23,7 @@ interface Exp {
   nest?: boolean; // canvas inside nested containers like the app (100dvh, relative, overflow hidden)
   infoReset?: boolean; // renderer.info.autoReset=false + reset() every frame (the real app)
   linear?: boolean; // renderer.outputColorSpace = Linear (the real app)
+  realTex?: number; // load the real Earth JPEG textures (4096^2) with this anisotropy instead of generated ones
   c2d?: { count: number; hz: number; scale: number }; // 2D canvases (sky plot + perf chart) redrawn at `hz` (0 = every frame)
 }
 
@@ -99,6 +100,19 @@ const EXPS_E: Exp[] = [
   { id: 'E7', title: 'full / dpr3 / 基準 (再測定)', dpr: 3, aa: true, scene: 'full' },
 ];
 
+// Set F (default): E found nothing. The real app differs from every probe so far in what it loads:
+// real JPEG textures (decoded images kept alive + anisotropic filtering), not generated data.
+const ALL = { opaque: true, orbit: true, nest: true, infoReset: true, linear: true } as const;
+const EXPS_F: Exp[] = [
+  { id: 'F0', title: 'full / dpr3 / 基準', dpr: 3, aa: true, scene: 'full' },
+  { id: 'F1', title: '実JPEGテクスチャ(異方性8) / dpr3', dpr: 3, aa: true, scene: 'full', realTex: 8 },
+  { id: 'F2', title: '実JPEGテクスチャ(異方性1) / dpr3', dpr: 3, aa: true, scene: 'full', realTex: 1 },
+  { id: 'F3', title: '実JPEG(異方性8) / dpr2', dpr: 2, aa: true, scene: 'full', realTex: 8 },
+  { id: 'F4', title: '実JPEG(異方性8)+全部入り+HUD+2D / dpr3', dpr: 3, aa: true, scene: 'full', realTex: 8, overlay: 'blur', upload: 'partial', comm: true, c2d: { count: 2, hz: 4, scale: 3 }, ...ALL },
+  { id: 'F5', title: '実JPEG(異方性8)+clearのみ描画(テクスチャ未使用) / dpr3', dpr: 3, aa: true, scene: 'clear', realTex: 8 },
+  { id: 'F6', title: 'full / dpr3 / 基準 (再測定)', dpr: 3, aa: true, scene: 'full' },
+];
+
 const stage = document.getElementById('stage') as HTMLDivElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
 const report = document.getElementById('report') as HTMLDivElement;
@@ -141,13 +155,13 @@ function makeOverlay(kind: 'blur' | 'flat'): HTMLElement {
   return root;
 }
 
-function makeFullScene(bigTex: boolean, upload: 'none' | 'partial' | 'full', comm: boolean) {
+function makeFullScene(bigTex: boolean, upload: 'none' | 'partial' | 'full', comm: boolean, real: THREE.Texture[] | null) {
   const scene = new THREE.Scene();
   // an Earth-like sphere: 4 texture fetches + a little math in the fragment shader (a stand-in for the real one)
   const small = makeTexture(1024);
-  const t0 = bigTex ? makeTexture(4096) : small;
-  const t1 = bigTex ? makeTexture(4096) : small;
-  const t2 = bigTex ? makeTexture(4096) : small;
+  const t0 = real ? real[0] : bigTex ? makeTexture(4096) : small;
+  const t1 = real ? real[1] : bigTex ? makeTexture(4096) : small;
+  const t2 = real ? real[2] : bigTex ? makeTexture(4096) : small;
   const earth = new THREE.Mesh(
     new THREE.SphereGeometry(1, 64, 64),
     new THREE.ShaderMaterial({
@@ -287,7 +301,23 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   camera.lookAt(0, 0, 0);
   const controls = exp.orbit ? new OrbitControls(camera, renderer.domElement) : null;
   if (controls) controls.enableDamping = true;
-  const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex, exp.upload ?? 'none', !!exp.comm) : null;
+  let real: THREE.Texture[] | null = null;
+  if (exp.realTex) {
+    const loader = new THREE.TextureLoader();
+    const names = ['earth_day_4096.jpg', 'earth_night_4096.jpg', 'earth_bump_roughness_clouds_4096.jpg'];
+    hud.textContent = `[${idx + 1}/${total}] ${exp.id} テクスチャ読み込み中…`;
+    real = await Promise.all(
+      names.map((n) =>
+        loader.loadAsync(`/assets/textures/${n}`).then((t) => {
+          t.wrapS = THREE.RepeatWrapping;
+          t.anisotropy = exp.realTex!;
+          return t;
+        }),
+      ),
+    );
+    if (exp.scene === 'clear') real.forEach((t) => renderer.initTexture(t)); // resident on the GPU but unused
+  }
+  const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex, exp.upload ?? 'none', !!exp.comm, real) : null;
   const overlay = exp.overlay ? makeOverlay(exp.overlay) : null;
   if (overlay) document.body.appendChild(overlay);
   const emptyScene = new THREE.Scene();
@@ -403,6 +433,7 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   const mat = full?.earth.material as THREE.ShaderMaterial | undefined;
   if (mat) for (const k of ['t0', 't1', 't2']) (mat.uniforms[k].value as THREE.Texture).dispose();
   c2ds.forEach((c) => c.el.remove());
+  real?.forEach((t) => t.dispose());
   controls?.dispose();
   renderer.dispose();
   renderer.forceContextLoss();
@@ -477,7 +508,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
   const setName = params.get('set');
-  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : EXPS_E;
+  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : setName === 'E' ? EXPS_E : EXPS_F;
   const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
