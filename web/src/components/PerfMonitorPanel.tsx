@@ -210,6 +210,8 @@ export function PerfMonitorPanel({
       fps: Number(perf.fps.toFixed(1)),
       minFps: Number(perf.minFps.toFixed(1)),
       frameIntervalMs: Number(perf.frameTimeMs.toFixed(2)),
+      // frames that ended a >28 ms interval (newest last): what ran in them and in the frame before
+      recentHitches: (perf.hitches ?? []).slice(),
       cpuWorkBreakdownMs: {
         totalActiveMs: Number(totalCpuWorkMs.toFixed(2)),
         moonbitWasmSgp4PureMs: Number(perf.wasmPureSgp4Ms.toFixed(2)),

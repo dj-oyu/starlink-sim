@@ -7,7 +7,31 @@ import { rawColor } from '../util/rawColor';
 
 export type FrameCallback = (state: ThreeContextState, delta: number) => void;
 
+/** Bits set by frame callbacks (`perfStats.events`) to say what work happened in a frame. */
+export const FRAME_EVENT = {
+  uiReport: 1, // 4 Hz HUD/telemetry update
+  anchorFullUpload: 2, // every GPU anchor re-uploaded (re-base / seek)
+  orbitRecalc: 4, // selected satellite's orbit line recomputed
+  styleAll: 8, // selection / filter / search / observer changed: all satellites re-styled
+  fullPass: 16, // wasm full pass (jump or forced)
+} as const;
+
+/** A frame that ended a long interval, with what ran in it and in the frame before. */
+export interface HitchRecord {
+  atS: number; // seconds since the page started
+  intervalMs: number; // time since the previous frame
+  gapMs: number; // time between the previous frame's end and this frame's start (outside our code)
+  prevCpuMs: number; // our work in the previous frame (callbacks + render submit)
+  cpuMs: number; // our work in this frame
+  prevEvents: string[];
+  events: string[];
+}
+
 export interface RenderPerfStats {
+  /** Event bits of the frame in progress (see FRAME_EVENT); reset every frame. */
+  events: number;
+  /** Most recent frames whose interval exceeded 28 ms (newest last). */
+  hitches: HitchRecord[];
   fps: number;
   minFps: number;
   frameTimeMs: number;
@@ -132,6 +156,8 @@ export function Canvas({
     controls.zoomSpeed = 0.9;
 
     const perfStats: RenderPerfStats = {
+      events: 0,
+      hitches: [],
       fps: 60,
       minFps: 60,
       frameTimeMs: 16.6,
@@ -215,12 +241,21 @@ export function Canvas({
     let ftCount = 0;
     let ftPtr = 0;
 
+    let prevEnd = performance.now();
+    let prevCpu = 0;
+    let prevEvents = 0;
+    const eventNames = (bits: number) =>
+      (Object.keys(FRAME_EVENT) as (keyof typeof FRAME_EVENT)[]).filter((k) => bits & FRAME_EVENT[k]);
+
     const animate = (now: number) => {
       rafId = requestAnimationFrame(animate);
+      const frameStart = performance.now();
+      perfStats.events = 0;
       const dtMs = now - lastTime;
       const delta = dtMs / 1000;
       lastTime = now;
 
+      const hitchPending = dtMs > 28 && dtMs < 3000;
       if (dtMs > 0 && dtMs < 500) {
         const instFps = 1000 / dtMs;
         smoothedFps = smoothedFps * 0.9 + instFps * 0.1;
@@ -246,6 +281,24 @@ export function Canvas({
       const r0 = performance.now();
       state.renderFrame();
       const r1 = performance.now();
+
+      const cpuMs = r1 - frameStart;
+      if (hitchPending) {
+        const h = perfStats.hitches;
+        h.push({
+          atS: +(now / 1000).toFixed(2),
+          intervalMs: +dtMs.toFixed(1),
+          gapMs: +Math.max(0, frameStart - prevEnd).toFixed(1),
+          prevCpuMs: +prevCpu.toFixed(1),
+          cpuMs: +cpuMs.toFixed(1),
+          prevEvents: eventNames(prevEvents),
+          events: eventNames(perfStats.events),
+        });
+        if (h.length > 12) h.shift();
+      }
+      prevEnd = r1;
+      prevCpu = cpuMs;
+      prevEvents = perfStats.events;
 
       perfStats.webglRenderMs = r1 - r0;
       perfStats.drawCalls = renderer.info.render.calls;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import * as THREE from 'three';
-import { useFrame, useThree, RenderPerfStats } from '../fiber/PreactFiber';
+import { useFrame, useThree, RenderPerfStats, FRAME_EVENT } from '../fiber/PreactFiber';
 import {
   StarlinkSimEngine,
   ObserverConfig,
@@ -13,7 +13,8 @@ import { EarthGlobe, EarthVisualSettings } from './EarthGlobe';
 import { LensFlare } from './LensFlare';
 import { rawColor } from '../util/rawColor';
 
-export interface FullPerfSnapshot extends RenderPerfStats {
+export interface FullPerfSnapshot extends Omit<RenderPerfStats, 'events' | 'hitches'> {
+  hitches?: RenderPerfStats['hitches'];
   wasmPureSgp4Ms: number;
   wasmSlices: number;
   wasmFullPassMs: number;
@@ -829,6 +830,7 @@ export function ConstellationView({
 
     // 1. Run MoonBit Wasm SGP4 propagation
     engine.propagate(currentSimMs, timeScale, isPlaying);
+    if (gpuBufs && engine.wasmSlices === 1) threeState.perfStats.events |= FRAME_EVENT.fullPass;
     const gpuB = gpuBufs;
     const gf = gpuFrameRef.current;
     if (gpuB) {
@@ -843,6 +845,7 @@ export function ConstellationView({
         gpuRevRef.current = engine.anchorRevision;
         const lo = engine.anchorLo;
         const hi = engine.anchorHi;
+        if (hi - lo >= satCount) threeState.perfStats.events |= FRAME_EVENT.anchorFullUpload;
         for (const b of [gpuB.pvPoints, gpuB.pvTrail]) {
           b.clearUpdateRanges();
           b.addUpdateRange(lo * 6, (hi - lo) * 6);
@@ -897,6 +900,7 @@ export function ConstellationView({
       sc.count = satCount;
     }
     const partial = gpuB !== null && !ctxChanged;
+    if (ctxChanged) threeState.perfStats.events |= FRAME_EVENT.styleAll;
     const rangeLo = partial ? Math.min(engine.anchorLo, satCount) : 0;
     const rangeHi = partial ? Math.min(engine.anchorHi, satCount) : satCount;
 
@@ -1067,6 +1071,7 @@ export function ConstellationView({
         Math.abs(currentSimMs - lastOrbitCalcRef.current.timeMs) > ORBIT_RECALC_MS ||
         lastOrbitCalcRef.current.gt !== showGroundTrack
       ) {
+        threeState.perfStats.events |= FRAME_EVENT.orbitRecalc;
         lastOrbitCalcRef.current = {
           idx: selectedSatIndex,
           timeMs: currentSimMs,
@@ -1162,6 +1167,7 @@ export function ConstellationView({
     const nowPerf = performance.now();
     if (nowPerf - lastUiReportRef.current > 250) {
       lastUiReportRef.current = nowPerf;
+      threeState.perfStats.events |= FRAME_EVENT.uiReport;
       const telemetry =
         selectedSatIndex !== null
           ? engine.getSatelliteTelemetry(selectedSatIndex)
@@ -1175,6 +1181,7 @@ export function ConstellationView({
       const snap = perfOutRef.current;
       snap.fps = ps.fps;
       snap.minFps = ps.minFps;
+      snap.hitches = ps.hitches;
       snap.frameTimeMs = ps.frameTimeMs;
       snap.webglRenderMs = ps.webglRenderMs;
       snap.drawCalls = ps.drawCalls;
