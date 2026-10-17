@@ -5,7 +5,7 @@ import { FullPerfSnapshot } from './ConstellationView';
 /**
  * The open panel is a large backdrop-filter surface repainted 4x a second over the animating WebGL
  * canvas; on an iPhone (dpr 3, 60x follow) that cost ~12 stalls/s, ~3/s without the blur, so it is
- * drawn flat by default. Diagnostics: `?pp=blur,frozen,hz1,mini,nochart` (blur = the old look).
+ * drawn flat by default. Diagnostics: `?pp=blur,lite,frozen,hz1,mini,nochart` (blur = the old look; lite = flat children).
  */
 const PP = new Set(
   (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('pp') ?? '' : '')
@@ -269,7 +269,7 @@ export function PerfMonitorPanel({
 
   return (
     <div
-      className={`hud-panel${PP.has('blur') ? '' : ' perf-flat'}`}
+      className={`hud-panel${PP.has('blur') ? '' : ' perf-flat'}${PP.has('lite') ? ' perf-lite' : ''}`}
       style={{
         width: '100%',
         flexShrink: 0,

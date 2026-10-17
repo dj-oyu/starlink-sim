@@ -1060,3 +1060,11 @@ label,
   -webkit-backdrop-filter: none;
   background: rgba(7, 11, 22, 0.92);
 }
+
+/* `?pp=lite`: no nested boxes inside the panel (children keep their layout but draw no backgrounds,
+   borders, radii or shadows), to test whether the nested translucent layers add to the blur cost */
+.perf-lite * {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
