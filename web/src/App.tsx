@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import * as THREE from 'three';
 import { Canvas, threeHandleRef } from './fiber/PreactFiber';
-import { runGpuBench } from './util/gpuBench';
+import { runGpuBench, runStallBisect } from './util/gpuBench';
 import { useMediaQuery } from './util/useMediaQuery';
 import {
   SatInspectorBody,
@@ -598,6 +598,30 @@ export function App() {
       applySettings: async (next) => {
         setVisualSettings(next);
         await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      },
+      onProgress,
+    });
+  };
+
+  // Real-app stall bisect (Perf panel): runs with one feature off at a time
+  const runStallBisectFromPanel = async (onProgress: (msg: string) => void) => {
+    const handle = threeHandleRef.current;
+    if (!handle) throw new Error('renderer not ready');
+    const frames2 = () =>
+      new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    return runStallBisect({
+      handle,
+      settings: visualSettings,
+      applySettings: async (next) => {
+        setVisualSettings(next);
+        await frames2();
+      },
+      setPostFx: async (on) => {
+        setPostFx(on);
+        await frames2();
+      },
+      setFrozen: (f) => {
+        if (engine) engine.debugFreeze = f;
       },
       onProgress,
     });
@@ -1260,6 +1284,7 @@ export function App() {
           satCount={engine.count}
           onClose={() => setShowPerfPanel(false)}
           onRunGpuBench={runGpuBenchFromPanel}
+          onRunStallBisect={runStallBisectFromPanel}
         />
       )}
 

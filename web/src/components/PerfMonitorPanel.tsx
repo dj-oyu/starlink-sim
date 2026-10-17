@@ -11,6 +11,7 @@ interface PerfMonitorPanelProps {
   onClose: () => void;
   /** Runs the on-device GPU benchmark; resolves to the report object. */
   onRunGpuBench?: (onProgress: (msg: string) => void) => Promise<Record<string, unknown>>;
+  onRunStallBisect?: (onProgress: (msg: string) => void) => Promise<Record<string, unknown>>;
 }
 
 export function PerfMonitorPanel({
@@ -19,6 +20,7 @@ export function PerfMonitorPanel({
   satCount,
   onClose,
   onRunGpuBench,
+  onRunStallBisect,
 }: PerfMonitorPanelProps) {
   const [copied, setCopied] = useState(false);
   // Shown when automatic copying is blocked (e.g. some browsers): select-and-copy by hand
@@ -181,11 +183,11 @@ export function PerfMonitorPanel({
     return subscribePerf(applyPerf);
   }, [subscribePerf, latestPerfRef]);
 
-  const handleGpuBench = async () => {
-    if (!onRunGpuBench || benchMsg !== null) return;
+  const handleGpuBench = async (run = onRunGpuBench) => {
+    if (!run || benchMsg !== null) return;
     setBenchMsg('準備中…');
     try {
-      const report = await onRunGpuBench((m) => setBenchMsg(m));
+      const report = await run((m) => setBenchMsg(m));
       setModalCopied(false);
       setManualText(JSON.stringify(report, null, 2));
     } catch (e: any) {
@@ -266,8 +268,17 @@ export function PerfMonitorPanel({
         <span>📊 Render & Wasm SGP4 Profiler</span>
         <div style={{ display: 'flex', gap: '5px' }}>
           {onRunGpuBench && (
-            <button className="chip" onClick={handleGpuBench} disabled={benchMsg !== null}>
+            <button className="chip" onClick={() => handleGpuBench()} disabled={benchMsg !== null}>
               🧪 GPU Bench
+            </button>
+          )}
+          {onRunStallBisect && (
+            <button
+              className="chip"
+              onClick={() => handleGpuBench(onRunStallBisect)}
+              disabled={benchMsg !== null}
+            >
+              🔬 Stall Bisect
             </button>
           )}
           <button className="chip" onClick={handleCopyReport}>

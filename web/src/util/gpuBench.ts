@@ -174,3 +174,159 @@ export async function runGpuBench(d: GpuBenchDeps): Promise<Record<string, unkno
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Stall bisect: the periodic display stalls seen on iPhone at dpr 3 did not reproduce in the
+// standalone probe (/stall.html), so this runs the REAL app with one feature switched off at a time
+// and counts rAF intervals > 28 ms for each variant.
+
+export interface StallBisectDeps {
+  handle: ThreeContextState;
+  settings: EarthVisualSettings;
+  applySettings: (settings: EarthVisualSettings) => Promise<void>;
+  setPostFx: (on: boolean) => Promise<void>;
+  /** Freeze / resume all wasm propagation work (the engine's debug switch). */
+  setFrozen: (frozen: boolean) => void;
+  onProgress: (msg: string) => void;
+}
+
+interface StallVariant {
+  label: string;
+  apply: () => Promise<void>;
+  revert: () => Promise<void>;
+}
+
+export async function runStallBisect(d: StallBisectDeps): Promise<Record<string, unknown>> {
+  const { handle } = d;
+  const { scene, renderer } = handle;
+  const original = d.settings;
+  const WARMUP_MS = 1200;
+  const MEASURE_MS = 8000;
+  const HITCH_MS = 28;
+
+  const hide = (names: string[]): StallVariant => {
+    let prev: boolean[] = [];
+    let objs: THREE.Object3D[] = [];
+    return {
+      label: `非表示: ${names.join('+')}`,
+      apply: async () => {
+        objs = names.map((n) => scene.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
+        prev = objs.map((o) => o.visible);
+        objs.forEach((o) => (o.visible = false));
+      },
+      revert: async () => objs.forEach((o, i) => (o.visible = prev[i])),
+    };
+  };
+  const settingsVariant = (label: string, patch: Partial<EarthVisualSettings>): StallVariant => ({
+    label,
+    apply: () => d.applySettings({ ...original, ...patch }),
+    revert: () => d.applySettings(original),
+  });
+  const root = document.documentElement;
+  const variants: StallVariant[] = [
+    { label: '基準 (現在の設定)', apply: async () => {}, revert: async () => {} },
+    hide(['satellites']),
+    hide(['trails']),
+    hide(['commlinks']),
+    hide(['satellites', 'trails', 'commlinks']),
+    settingsVariant('雲・大気・昼夜OFF', { showClouds: false, showAtmosphere: false, dayNightShading: false }),
+    settingsVariant('レンズフレアOFF', { showFlare: false }),
+    {
+      label: 'Lens FX(後処理)OFF',
+      apply: () => d.setPostFx(false),
+      revert: () => d.setPostFx(true),
+    },
+    {
+      label: 'HUD非表示',
+      apply: async () => root.classList.add('bench-hud-hidden'),
+      revert: async () => root.classList.remove('bench-hud-hidden'),
+    },
+    {
+      label: 'wasm計算を停止',
+      apply: async () => d.setFrozen(true),
+      revert: async () => d.setFrozen(false),
+    },
+    {
+      label: '地球のみ (衛星・軌跡・リンク・HUD・wasm停止)',
+      apply: async () => {
+        await hide(['satellites', 'trails', 'commlinks']).apply();
+        root.classList.add('bench-hud-hidden');
+        d.setFrozen(true);
+      },
+      revert: async () => {
+        d.setFrozen(false);
+        root.classList.remove('bench-hud-hidden');
+      },
+    },
+  ];
+  // hide() keeps its restore state per instance, so keep the objects used for 'earth only' reversible
+  const earthOnlyHidden = hide(['satellites', 'trails', 'commlinks']);
+  variants[variants.length - 1] = {
+    label: variants[variants.length - 1].label,
+    apply: async () => {
+      await earthOnlyHidden.apply();
+      root.classList.add('bench-hud-hidden');
+      d.setFrozen(true);
+    },
+    revert: async () => {
+      d.setFrozen(false);
+      root.classList.remove('bench-hud-hidden');
+      await earthOnlyHidden.revert();
+    },
+  };
+
+  const results: Record<string, unknown>[] = [];
+  const measure = async () => {
+    const intervals: number[] = [];
+    const hitchAt: number[] = [];
+    let last = await raf();
+    const t0 = last;
+    while (last - t0 < WARMUP_MS + MEASURE_MS) {
+      const t = await raf();
+      if (last - t0 > WARMUP_MS) {
+        intervals.push(t - last);
+        if (t - last > HITCH_MS) hitchAt.push(t);
+      }
+      last = t;
+    }
+    const sorted = intervals.slice().sort((a, b) => a - b);
+    const events: number[] = [];
+    for (const t of hitchAt) if (events.length === 0 || t - events[events.length - 1] > 150) events.push(t);
+    const gaps: number[] = [];
+    for (let i = 1; i < events.length; i++) gaps.push(events[i] - events[i - 1]);
+    gaps.sort((a, b) => a - b);
+    const sum = intervals.reduce((a, b) => a + b, 0);
+    return {
+      fps: +((intervals.length * 1000) / Math.max(1, sum)).toFixed(1),
+      p99Ms: +(sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))] ?? 0).toFixed(1),
+      maxMs: +(sorted[sorted.length - 1] ?? 0).toFixed(0),
+      hitches: hitchAt.length,
+      hitchesPerS: +(hitchAt.length / (MEASURE_MS / 1000)).toFixed(2),
+      hitchSpacingMs: gaps.length ? Math.round(gaps[gaps.length >> 1]) : null,
+    };
+  };
+
+  try {
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      d.onProgress(`[${i + 1}/${variants.length}] ${v.label}`);
+      await v.apply();
+      await frames(3);
+      results.push({ variant: v.label, ...(await measure()) });
+      await v.revert();
+      await frames(3);
+    }
+  } finally {
+    d.setFrozen(false);
+    document.documentElement.classList.remove('bench-hud-hidden');
+    await d.applySettings(original);
+  }
+  return {
+    kind: 'stall-bisect',
+    device: collectDeviceInfo(),
+    pixelRatio: renderer.getPixelRatio(),
+    drawingBuffer: `${renderer.domElement.width}x${renderer.domElement.height}`,
+    hitchThresholdMs: HITCH_MS,
+    results,
+  };
+}
