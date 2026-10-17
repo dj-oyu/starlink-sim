@@ -618,9 +618,12 @@ export function App() {
         if (cancelled) return;
         const age = s.ageSec == null ? '' : ` (${(s.ageSec / 3600).toFixed(1)} 時間前)`;
         const parts = [
-          s.exists ? `サーバーのTLE: ${new Date(s.updatedAt).toLocaleString()}${age}` : 'サーバーにTLEがまだありません',
+          s.exists
+            ? `TLEの最新エポック: ${new Date(s.newestEpoch).toLocaleString()}${age}`
+            : 'サーバーにTLEがまだありません',
           s.refreshing ? '更新中…' : s.stale ? '古いため更新待ち' : '最新',
         ];
+        if (s.exists) parts.push(`サーバー取得: ${new Date(s.updatedAt).toLocaleString()}`);
         if (s.cooldownRemainingSec > 0) parts.push(`次の取得まで ${Math.ceil(s.cooldownRemainingSec / 60)} 分`);
         if (s.lastError) parts.push(`直近のエラー: ${s.lastError}`);
         setTleServerStatus(parts.join(' / '));
