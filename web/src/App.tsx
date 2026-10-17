@@ -77,6 +77,11 @@ function stationShortName(name: string): string {
 }
 
 /** Diagnostics: `?cut=hud,cv` leaves out the HUD / the constellation (Earth only) to bisect stalls on-device. */
+const QS = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
+/** Diagnostics: `?speed=60&sel=1000&follow=1` starts at 60x with satellite #1000 selected and followed. */
+const INIT_SPEED = Number(QS.get('speed')) || 1;
+const INIT_SEL = QS.has('sel') ? Number(QS.get('sel')) : null;
+const INIT_FOLLOW = QS.get('follow') === '1' && INIT_SEL !== null;
 const CUT = new Set(
   (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('cut') ?? '' : '')
     .split(',')
@@ -286,7 +291,7 @@ export function App() {
   const simTimeMsRef = useRef<number>(Date.now());
   const anchorTimeMsRef = useRef<number>(Date.now());
   const [isPlaying, setIsPlaying] = useState(true);
-  const [timeScale, setTimeScale] = useState(1);
+  const [timeScale, setTimeScale] = useState(INIT_SPEED);
 
   // Direct DOM refs for high-frequency HUD readouts
   const topInRangeRef = useRef<HTMLSpanElement>(null);
@@ -321,8 +326,10 @@ export function App() {
     true,
   ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSatIndex, setSelectedSatIndex] = useState<number | null>(null);
-  const [followSelected, setFollowSelected] = useState(false);
+  const [selectedSatIndex, setSelectedSatIndex] = useState<number | null>(
+    INIT_SEL !== null && Number.isFinite(INIT_SEL) ? INIT_SEL : null,
+  );
+  const [followSelected, setFollowSelected] = useState(INIT_FOLLOW);
   const [showGroundTrack, setShowGroundTrack] = useState(true);
 
   // Ground Station Observer
