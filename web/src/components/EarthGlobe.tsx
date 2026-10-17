@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import * as THREE from 'three';
+import { rawColor, srgbEncode } from '../util/rawColor';
 import { useFrame, useThree } from '../fiber/PreactFiber';
 import { latLonAltToThree } from '../wasm/simEngine';
 
@@ -231,9 +232,9 @@ export function EarthGlobe({
       starPos[i * 3 + 1] = r * Math.cos(theta);
       starPos[i * 3 + 2] = r * Math.sin(theta) * Math.sin(phi);
       const tint = 0.75 + Math.random() * 0.25;
-      starCol[i * 3] = tint;
-      starCol[i * 3 + 1] = tint;
-      starCol[i * 3 + 2] = Math.min(1, tint + 0.1);
+      starCol[i * 3] = srgbEncode(tint);
+      starCol[i * 3 + 1] = srgbEncode(tint);
+      starCol[i * 3 + 2] = srgbEncode(Math.min(1, tint + 0.1));
     }
     const starGeom = new THREE.BufferGeometry();
     starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
@@ -329,7 +330,7 @@ export function EarthGlobe({
     const vectorGroup = new THREE.Group();
     const coastGeom = new THREE.BufferGeometry();
     const coastMat = new THREE.LineBasicMaterial({
-      color: 0x38bdf8,
+      color: rawColor(0x38bdf8),
       transparent: true,
       opacity: 0.5,
     });
@@ -337,7 +338,7 @@ export function EarthGlobe({
 
     const borderGeom = new THREE.BufferGeometry();
     const borderMat = new THREE.LineBasicMaterial({
-      color: 0x0ea5e9,
+      color: rawColor(0x0ea5e9),
       transparent: true,
       opacity: 0.35,
     });
@@ -388,7 +389,7 @@ export function EarthGlobe({
     const gridGeom = new THREE.BufferGeometry();
     gridGeom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     const gridMat = new THREE.LineBasicMaterial({
-      color: 0x38bdf8,
+      color: rawColor(0x38bdf8),
       transparent: true,
       opacity: 0.14,
     });

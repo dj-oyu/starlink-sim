@@ -3,6 +3,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PostFx } from './postFx';
+import { rawColor } from '../util/rawColor';
 
 export type FrameCallback = (state: ThreeContextState, delta: number) => void;
 
@@ -114,7 +115,9 @@ export function Canvas({
     // Cap at 3: on an iPhone (dpr 3) the GPU cost of 3x vs 2x measured only +0.35 ms/frame
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
     renderer.setSize(width, height);
-    renderer.setClearColor(0x02050d, 1);
+    // linear output: see util/rawColor.ts
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.setClearColor(rawColor(0x02050d), 1);
 
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
@@ -156,6 +159,10 @@ export function Canvas({
           post ??= new PostFx();
           post.render(renderer, scene, camera);
         } else {
+          if (post) {
+            post.dispose(); // switched off: give the target memory back
+            post = null;
+          }
           renderer.render(scene, camera);
         }
       },

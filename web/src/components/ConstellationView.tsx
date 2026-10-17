@@ -10,6 +10,7 @@ import {
 } from '../wasm/simEngine';
 import { EarthGlobe, EarthVisualSettings } from './EarthGlobe';
 import { LensFlare } from './LensFlare';
+import { rawColor } from '../util/rawColor';
 
 export interface FullPerfSnapshot extends RenderPerfStats {
   wasmPureSgp4Ms: number;
@@ -458,12 +459,12 @@ export function ConstellationView({
     selGroup.visible = false;
     const selDot = new THREE.Mesh(
       new THREE.SphereGeometry(0.012, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 0xfde047 }),
+      new THREE.MeshBasicMaterial({ color: rawColor(0xfde047) }),
     );
     const selRing = new THREE.Mesh(
       new THREE.RingGeometry(0.018, 0.025, 32),
       new THREE.MeshBasicMaterial({
-        color: 0xfde047,
+        color: rawColor(0xfde047),
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 0.9,
@@ -477,7 +478,7 @@ export function ConstellationView({
     // 3. Orbit Path & Ground Track Lines
     const orbitGeom = new THREE.BufferGeometry();
     const orbitMat = new THREE.LineBasicMaterial({
-      color: 0xfde047,
+      color: rawColor(0xfde047),
       transparent: true,
       opacity: 0.88,
     });
@@ -488,7 +489,7 @@ export function ConstellationView({
 
     const gtGeom = new THREE.BufferGeometry();
     const gtMat = new THREE.LineBasicMaterial({
-      color: 0xf97316,
+      color: rawColor(0xf97316),
       transparent: true,
       opacity: 0.78,
     });
@@ -501,14 +502,14 @@ export function ConstellationView({
     const obsGroup = new THREE.Group();
     const obsPin = new THREE.Mesh(
       new THREE.SphereGeometry(0.012, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 0x10b981 }),
+      new THREE.MeshBasicMaterial({ color: rawColor(0x10b981) }),
     );
     obsGroup.add(obsPin);
     obsPinMeshRef.current = obsPin;
 
     const obsRingGeom = new THREE.BufferGeometry();
     const obsRingMat = new THREE.LineBasicMaterial({
-      color: 0x10b981,
+      color: rawColor(0x10b981),
       transparent: true,
       opacity: 0.55,
     });
@@ -521,7 +522,7 @@ export function ConstellationView({
     commGeom.setAttribute('position', commLineAttr);
     commGeom.setDrawRange(0, 0);
     const commMat = new THREE.LineBasicMaterial({
-      color: 0x34d399,
+      color: rawColor(0x34d399),
       transparent: true,
       opacity: 0.45,
       blending: THREE.AdditiveBlending,

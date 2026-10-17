@@ -21,7 +21,7 @@ const FRAG = /* glsl */ `
   void main() {
     vec2 d = (vUv - 0.5) * vec2(uAspect, 1.0);
     float r = length(d) / length(vec2(uAspect, 1.0) * 0.5); // 0 centre .. 1 corner
-    float edge = smoothstep(0.35, 1.0, r);
+    float edge = smoothstep(0.45, 1.0, r);
     vec2 dir = normalize(d + 1e-6) * vec2(1.0 / uAspect, 1.0);
     vec3 c;
     if (edge < 0.002) {
@@ -51,9 +51,9 @@ const FRAG = /* glsl */ `
 `;
 
 /**
- * Optional full-screen post pass. The scene is rendered into a half-float target tagged sRGB, so
- * three.js converts built-in materials exactly as it would on screen while the raw custom shaders
- * are untouched; the pass then writes the stored values back unchanged apart from the effect.
+ * Optional full-screen post pass. The renderer outputs linear (= display) values unchanged for every
+ * material, so the scene stored in the target is exactly what would have gone to the canvas; the
+ * pass writes it back apart from the effect.
  */
 export class PostFx {
   private target: THREE.WebGLRenderTarget | null = null;
@@ -90,14 +90,15 @@ export class PostFx {
     if (!this.target || this.target.width !== w || this.target.height !== h) {
       this.target?.dispose();
       this.target = new THREE.WebGLRenderTarget(w, h, {
-        type: THREE.HalfFloatType,
+        // 8-bit like the canvas (same clamping of additive blends), half the bandwidth of half-float
+        type: THREE.UnsignedByteType,
         samples: 2, // 4x cost ~3 ms of fixed overhead on an iPhone at dpr 3
         depthBuffer: true,
+        resolveDepthBuffer: false, // the depth is not used after the pass
         generateMipmaps: false,
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
       });
-      this.target.texture.colorSpace = THREE.SRGBColorSpace;
     }
     renderer.setRenderTarget(this.target);
     renderer.render(scene, camera);
@@ -107,7 +108,10 @@ export class PostFx {
     u.uTexel.value.set(1 / w, 1 / h);
     u.uPx.value = renderer.getPixelRatio();
     u.uAspect.value = w / h;
+    const ac = renderer.autoClear;
+    renderer.autoClear = false; // the full-screen triangle overwrites every pixel
     renderer.render(this.scene, this.cam);
+    renderer.autoClear = ac;
   }
 
   dispose(): void {
