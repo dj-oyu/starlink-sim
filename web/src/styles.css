@@ -771,6 +771,10 @@
     order: -1;
     width: 100%;
     text-align: center;
+    flex-direction: column;
+    gap: 2px;
+    white-space: nowrap;
+    padding: 0 44px; /* symmetric, clear of the collapse chevron */
   }
 }
 
@@ -825,6 +829,10 @@ label,
 }
 
 .timebar-toggle {
+  display: none;
+}
+
+.clock-compact {
   display: none;
 }
 
@@ -970,10 +978,71 @@ label,
     z-index: 2;
   }
 
-  .bottom-timebar--collapsed .speed-buttons,
+  /* icon-only play / LIVE buttons: 40px touch targets */
+  .tb-btn {
+    min-width: 40px;
+    min-height: 40px;
+    justify-content: center;
+    padding: 0 8px;
+  }
+
   .bottom-timebar--collapsed .timeline-slider-row,
-  .bottom-timebar--collapsed .btn-epoch {
+  .bottom-timebar--collapsed .btn-epoch,
+  .bottom-timebar--collapsed .speed-step,
+  .bottom-timebar--collapsed .clock-full {
     display: none;
+  }
+
+  /* collapsed: a single row [play] [LIVE] [JST time ...] [speed] [chevron] */
+  .bottom-timebar--collapsed {
+    padding: 6px 54px 6px 8px;
+    min-height: 52px;
+    justify-content: center;
+  }
+
+  .bottom-timebar--collapsed .timebar-toggle {
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 40px;
+  }
+
+  .bottom-timebar--collapsed .timebar-top {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .bottom-timebar--collapsed .timebar-top > div:first-child {
+    gap: 6px !important;
+    flex: 0 0 auto;
+  }
+
+  .bottom-timebar--collapsed .time-readout {
+    order: 0;
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 12px;
+    justify-content: center;
+    flex-direction: row;
+    padding: 0;
+  }
+
+  .bottom-timebar--collapsed .clock-compact {
+    display: inline;
+  }
+
+  .bottom-timebar--collapsed .speed-buttons {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .bottom-timebar--collapsed .speed-select {
+    min-width: 0;
+    width: 70px;
+    height: 40px;
+    padding: 0 4px;
   }
 }
 

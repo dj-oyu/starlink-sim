@@ -39,7 +39,10 @@ import {
   LocateFixed,
   Menu,
   Minus,
+  Pause,
+  Play,
   Plus,
+  Radio,
   Search,
   X,
 } from 'lucide-preact';
@@ -114,6 +117,24 @@ function formatJst(ms: number): string {
     ':' +
     pad2(sharedDateJst.getUTCSeconds()) +
     ' JST)'
+  );
+}
+
+// Phone collapsed time bar: one short JST string ("10-17 12:34:56 JST")
+function formatJstCompact(ms: number): string {
+  sharedDateJst.setTime(ms + 9 * 3600 * 1000);
+  if (isNaN(sharedDateJst.getUTCFullYear())) return '----';
+  return (
+    pad2(sharedDateJst.getUTCMonth() + 1) +
+    '-' +
+    pad2(sharedDateJst.getUTCDate()) +
+    ' ' +
+    pad2(sharedDateJst.getUTCHours()) +
+    ':' +
+    pad2(sharedDateJst.getUTCMinutes()) +
+    ':' +
+    pad2(sharedDateJst.getUTCSeconds()) +
+    ' JST'
   );
 }
 
@@ -265,6 +286,7 @@ export function App() {
   const topSgp4MsRef = useRef<HTMLSpanElement>(null);
   const utcClockRef = useRef<HTMLSpanElement>(null);
   const jstClockRef = useRef<HTMLSpanElement>(null);
+  const jstCompactClockRef = useRef<HTMLSpanElement>(null);
   const sliderInputRef = useRef<HTMLInputElement>(null);
   const datetimeInputRef = useRef<HTMLInputElement>(null);
 
@@ -433,6 +455,7 @@ export function App() {
   const syncClockDom = (ms: number) => {
     if (utcClockRef.current) utcClockRef.current.textContent = formatUtcIso(ms);
     if (jstClockRef.current) jstClockRef.current.textContent = formatJst(ms);
+    if (jstCompactClockRef.current) jstCompactClockRef.current.textContent = formatJstCompact(ms);
     if (sliderInputRef.current) {
       const offsetMins = (ms - anchorTimeMsRef.current) / 60000;
       sliderInputRef.current.value = String(
@@ -1343,20 +1366,26 @@ export function App() {
         <div className="timebar-top">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
-              className="btn active"
+              className="btn active tb-btn"
+              aria-label={isPlaying ? '一時停止' : '再生'}
+              title={isPlaying ? '一時停止' : '再生'}
               onClick={() => setIsPlaying((p) => !p)}
             >
-              {isPlaying ? '⏸ Pause' : '▶ Play'}
+              {isPlaying ? <Pause size={18} className="only-narrow" /> : <Play size={18} className="only-narrow" />}
+              <span className="btn-label">{isPlaying ? '⏸ Pause' : '▶ Play'}</span>
             </button>
             <button
-              className="btn active-emerald"
+              className="btn active-emerald tb-btn"
+              aria-label="現在時刻にジャンプ (LIVE)"
+              title="LIVE (現在時刻)"
               onClick={() => {
                 setTimeScale(1);
                 setIsPlaying(true);
                 handleJumpToTime(Date.now());
               }}
             >
-              🔴 LIVE (現在時刻)
+              <Radio size={18} className="only-narrow" />
+              <span className="btn-label">🔴 LIVE (現在時刻)</span>
             </button>
             <button
               className="btn btn-epoch"
@@ -1368,15 +1397,18 @@ export function App() {
           </div>
 
           <div className="time-readout">
-            <span ref={utcClockRef}>{formatUtcIso(simTimeMsRef.current)}</span>
-            <span ref={jstClockRef} style={{ fontSize: '12px', color: '#38bdf8' }}>
+            <span ref={utcClockRef} className="clock-full">{formatUtcIso(simTimeMsRef.current)}</span>
+            <span ref={jstCompactClockRef} className="clock-compact">
+              {formatJstCompact(simTimeMsRef.current)}
+            </span>
+            <span ref={jstClockRef} className="clock-full" style={{ fontSize: '12px', color: '#38bdf8' }}>
               {formatJst(simTimeMsRef.current)}
             </span>
           </div>
 
           <div className="speed-buttons" role="group" aria-label="再生速度">
             <button
-              className="btn"
+              className="btn speed-step"
               aria-label="速度を下げる"
               disabled={SPEED_OPTIONS.indexOf(timeScale) <= 0}
               onClick={() => {
@@ -1403,7 +1435,7 @@ export function App() {
               ))}
             </select>
             <button
-              className="btn"
+              className="btn speed-step"
               aria-label="速度を上げる"
               disabled={SPEED_OPTIONS.indexOf(timeScale) >= SPEED_OPTIONS.length - 1}
               onClick={() => {
