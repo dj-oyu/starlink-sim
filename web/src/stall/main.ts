@@ -23,6 +23,7 @@ interface Exp {
   nest?: boolean; // canvas inside nested containers like the app (100dvh, relative, overflow hidden)
   infoReset?: boolean; // renderer.info.autoReset=false + reset() every frame (the real app)
   linear?: boolean; // renderer.outputColorSpace = Linear (the real app)
+  perfPanel?: { blur: boolean; lite: boolean }; // a copy of the real Perf panel (372x487, ~60 nodes, 4 Hz updates)
   realTex?: number; // load the real Earth JPEG textures (4096^2) with this anisotropy instead of generated ones
   c2d?: { count: number; hz: number; scale: number }; // 2D canvases (sky plot + perf chart) redrawn at `hz` (0 = every frame)
 }
@@ -112,6 +113,75 @@ const EXPS_F: Exp[] = [
   { id: 'F5', title: '実JPEG(異方性8)+clearのみ描画(テクスチャ未使用) / dpr3', dpr: 3, aa: true, scene: 'clear', realTex: 8 },
   { id: 'F6', title: 'full / dpr3 / 基準 (再測定)', dpr: 3, aa: true, scene: 'full' },
 ];
+
+// Set G (default): does the Perf panel's blur / nested translucent children matter? The panel is
+// rebuilt here (same size, structure and 4 Hz updates) over the real textures + HUD-like blur
+// panels; the variants alternate and repeat so run-to-run noise can be told from real effects.
+const PV = (blur: boolean, lite: boolean) => ({ blur, lite });
+const GBASE = { dpr: 3, aa: true, scene: 'full' as const, realTex: 8, overlay: 'blur' as const, upload: 'partial' as const, comm: true };
+const EXPS_G: Exp[] = [
+  { id: 'G1', title: 'Perf: blur + 子要素あり', ...GBASE, perfPanel: PV(true, false) },
+  { id: 'G2', title: 'Perf: blur + lite(子要素の背景なし)', ...GBASE, perfPanel: PV(true, true) },
+  { id: 'G3', title: 'Perf: flat + 子要素あり', ...GBASE, perfPanel: PV(false, false) },
+  { id: 'G4', title: 'Perf: flat + lite', ...GBASE, perfPanel: PV(false, true) },
+  { id: 'G5', title: 'Perf: なし', ...GBASE },
+  { id: 'G6', title: 'Perf: blur + 子要素あり (2回目)', ...GBASE, perfPanel: PV(true, false) },
+  { id: 'G7', title: 'Perf: blur + lite (2回目)', ...GBASE, perfPanel: PV(true, true) },
+  { id: 'G8', title: 'Perf: flat + 子要素あり (2回目)', ...GBASE, perfPanel: PV(false, false) },
+  { id: 'G9', title: 'Perf: flat + lite (2回目)', ...GBASE, perfPanel: PV(false, true) },
+  { id: 'G10', title: 'Perf: なし (2回目)', ...GBASE },
+  { id: 'G11', title: 'Perf: blur + 子要素あり (3回目)', ...GBASE, perfPanel: PV(true, false) },
+  { id: 'G12', title: 'Perf: blur + lite (3回目)', ...GBASE, perfPanel: PV(true, true) },
+];
+
+/** A stand-in for the real Perf panel: 372x487 css, nested translucent boxes, 4 Hz text/bar/canvas updates. */
+function makePerfPanel(v: { blur: boolean; lite: boolean }): HTMLElement {
+  const box = (bg = true) =>
+    `border-radius:8px;${bg && !v.lite ? 'background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.16);' : 'border:1px solid transparent;'}`;
+  const root = document.createElement('div');
+  const blur = v.blur ? 'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);' : '';
+  const bg = v.blur ? 'rgba(8,16,32,.55)' : 'rgba(7,11,22,.92)';
+  root.style.cssText = `position:fixed;z-index:2;left:34px;top:70px;width:372px;height:487px;border-radius:10px;border:1px solid rgba(56,189,248,.35);background:${bg};${blur}padding:13px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;color:#cbd5e1;font:11px monospace;overflow:hidden;pointer-events:none`;
+  const spans: HTMLElement[] = [];
+  const bars: HTMLElement[] = [];
+  const mk = (html: string) => {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    root.appendChild(d);
+    return d;
+  };
+  mk('<b>Render &amp; Wasm SGP4 Profiler</b>');
+  let grid = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
+  for (let i = 0; i < 3; i++) grid += `<div style="${box()}padding:6px"><div>FPS</div><div class="t">60</div></div>`;
+  mk(grid + '</div>');
+  let barsHtml = `<div style="${box()}padding:8px"><div style="display:flex;height:12px;border-radius:6px;overflow:hidden">`;
+  for (let i = 0; i < 4; i++) barsHtml += `<div class="b" style="width:10%;background:${['#38bdf8', '#a78bfa', '#10b981', '#fb923c'][i]}"></div>`;
+  mk(barsHtml + '</div></div>');
+  for (let i = 0; i < 4; i++) mk(`<div style="${box()}padding:6px;display:flex;justify-content:space-between"><span>stage ${i}</span><span class="t">0.00 ms</span></div>`);
+  mk(`<div style="${box()}padding:6px"><canvas class="c" width="560" height="96" style="width:324px;height:48px"></canvas></div>`);
+  let tg = '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">';
+  for (let i = 0; i < 4; i++) tg += `<div style="${box()}padding:6px"><div>label</div><div class="t">0</div></div>`;
+  mk(tg + '</div>');
+  root.querySelectorAll<HTMLElement>('.t').forEach((e) => spans.push(e));
+  root.querySelectorAll<HTMLElement>('.b').forEach((e) => bars.push(e));
+  const ctx = (root.querySelector('.c') as HTMLCanvasElement).getContext('2d')!;
+  const hist = new Float32Array(60);
+  let n = 0;
+  const timer = window.setInterval(() => {
+    n++;
+    spans.forEach((e, i) => (e.textContent = `${(Math.sin(n + i) * 5 + 8).toFixed(2)}`));
+    bars.forEach((e, i) => (e.style.width = `${10 + ((n * (i + 3)) % 20)}%`));
+    hist.copyWithin(0, 1);
+    hist[59] = Math.random() * 10;
+    ctx.clearRect(0, 0, 560, 96);
+    ctx.strokeStyle = '#34d399';
+    ctx.beginPath();
+    for (let i = 0; i < 60; i++) ctx.lineTo((i / 59) * 560, 96 - hist[i] * 8);
+    ctx.stroke();
+  }, 250);
+  (root as unknown as { stop: () => void }).stop = () => window.clearInterval(timer);
+  return root;
+}
 
 const stage = document.getElementById('stage') as HTMLDivElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
@@ -320,6 +390,8 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex, exp.upload ?? 'none', !!exp.comm, real) : null;
   const overlay = exp.overlay ? makeOverlay(exp.overlay) : null;
   if (overlay) document.body.appendChild(overlay);
+  const perfPanel = exp.perfPanel ? makePerfPanel(exp.perfPanel) : null;
+  if (perfPanel) document.body.appendChild(perfPanel);
   const emptyScene = new THREE.Scene();
   const buffer = `${renderer.domElement.width}x${renderer.domElement.height}`;
   // 2D canvases like the sky plot (280x280 css) and the perf chart (400x80 css), shown over the canvas
@@ -432,6 +504,8 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   full?.earth.geometry.dispose();
   const mat = full?.earth.material as THREE.ShaderMaterial | undefined;
   if (mat) for (const k of ['t0', 't1', 't2']) (mat.uniforms[k].value as THREE.Texture).dispose();
+  (perfPanel as unknown as { stop?: () => void } | null)?.stop?.();
+  perfPanel?.remove();
   c2ds.forEach((c) => c.el.remove());
   real?.forEach((t) => t.dispose());
   controls?.dispose();
@@ -508,7 +582,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
   const setName = params.get('set');
-  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : setName === 'E' ? EXPS_E : EXPS_F;
+  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : setName === 'E' ? EXPS_E : setName === 'F' ? EXPS_F : EXPS_G;
   const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
