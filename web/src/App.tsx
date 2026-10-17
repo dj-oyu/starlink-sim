@@ -267,8 +267,8 @@ export function App() {
   const sliderInputRef = useRef<HTMLInputElement>(null);
   const datetimeInputRef = useRef<HTMLInputElement>(null);
 
-  // Peripheral chromatic aberration / blur / vignette (off-screen pass; off by default)
-  const [postFx, setPostFx] = useState(false);
+  // Peripheral chromatic aberration / blur / vignette (off-screen pass; ~0.5 ms on an iPhone at dpr 3)
+  const [postFx, setPostFx] = useState(true);
 
   // Earth Visual Settings
   const [visualSettings, setVisualSettings] = useState<EarthVisualSettings>({
