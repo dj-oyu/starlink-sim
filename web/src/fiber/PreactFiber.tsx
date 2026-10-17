@@ -52,6 +52,8 @@ export interface ThreeContextState {
   controls: OrbitControls;
   perfStats: RenderPerfStats;
   registerFrame: (cb: FrameCallback) => () => void;
+  /** Diagnostics (Stall Bisect): when true the loop skips controls and all frame callbacks. */
+  debugSkipCallbacks: boolean;
   /** Draws one frame the way the main loop does (through the post pass when it is on). */
   renderFrame: () => void;
 }
@@ -183,6 +185,7 @@ export function Canvas({
       controls,
       perfStats,
       registerFrame,
+      debugSkipCallbacks: false,
       renderFrame: () => {
         if (postFxOnRef.current) {
           post ??= new PostFx();
@@ -274,10 +277,12 @@ export function Canvas({
         perfStats.frameTimeMs = dtMs;
       }
 
-      controls.update();
-      const listeners = frameListenersRef.current;
-      for (let i = 0; i < listeners.length; i++) {
-        listeners[i](state, delta);
+      if (!state.debugSkipCallbacks) {
+        controls.update();
+        const listeners = frameListenersRef.current;
+        for (let i = 0; i < listeners.length; i++) {
+          listeners[i](state, delta);
+        }
       }
 
       renderer.info.reset(); // two render calls per frame with the post pass: count both

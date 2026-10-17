@@ -223,6 +223,8 @@ export async function runStallBisect(d: StallBisectDeps): Promise<Record<string,
     revert: () => d.applySettings(original),
   });
   const root = document.documentElement;
+  const startRatio = renderer.getPixelRatio();
+  const size = renderer.getSize(new THREE.Vector2());
   const variants: StallVariant[] = [
     { label: '基準 (現在の設定)', apply: async () => {}, revert: async () => {} },
     hide(['satellites']),
@@ -245,6 +247,48 @@ export async function runStallBisect(d: StallBisectDeps): Promise<Record<string,
       label: 'wasm計算を停止',
       apply: async () => d.setFrozen(true),
       revert: async () => d.setFrozen(false),
+    },
+    {
+      label: '空シーン (scene.visible=false)',
+      apply: async () => {
+        scene.visible = false;
+      },
+      revert: async () => {
+        scene.visible = true;
+      },
+    },
+    {
+      label: 'フレームコールバック・controls停止 (描画のみ)',
+      apply: async () => {
+        handle.debugSkipCallbacks = true;
+      },
+      revert: async () => {
+        handle.debugSkipCallbacks = false;
+      },
+    },
+    {
+      label: '空シーン + コールバック停止 + HUD非表示 (ループのみ)',
+      apply: async () => {
+        scene.visible = false;
+        handle.debugSkipCallbacks = true;
+        root.classList.add('bench-hud-hidden');
+      },
+      revert: async () => {
+        scene.visible = true;
+        handle.debugSkipCallbacks = false;
+        root.classList.remove('bench-hud-hidden');
+      },
+    },
+    {
+      label: 'ピクセル比2 (対照: 消えるはず)',
+      apply: async () => {
+        renderer.setPixelRatio(2);
+        renderer.setSize(size.x, size.y, false);
+      },
+      revert: async () => {
+        renderer.setPixelRatio(startRatio);
+        renderer.setSize(size.x, size.y, false);
+      },
     },
     {
       label: '地球のみ (衛星・軌跡・リンク・HUD・wasm停止)',
@@ -317,6 +361,10 @@ export async function runStallBisect(d: StallBisectDeps): Promise<Record<string,
       await frames(3);
     }
   } finally {
+    handle.debugSkipCallbacks = false;
+    scene.visible = true;
+    renderer.setPixelRatio(startRatio);
+    renderer.setSize(size.x, size.y, false);
     d.setFrozen(false);
     document.documentElement.classList.remove('bench-hud-hidden');
     await d.applySettings(original);
