@@ -138,11 +138,11 @@ export function Canvas({
       powerPreference: 'high-performance',
       alpha: false,
     });
-    // Cap at 2: on an iPhone (dpr 3, 1320x2388 buffer) the GPU time is small (+0.35 ms vs 2x) but
-    // the buffer hand-off stalls the display: every ~0.3 s a ~25 ms submit followed by a 50-70 ms
-    // gap (minFps 15); at 2x those stalls are gone (minFps 40). `?dpr=N` overrides it.
+    // Cap at 3 (an iPhone's native ratio). The stalls seen at dpr 3 only happened with the Perf panel
+    // open (its charts + DOM updates; ~1-2 hitches/s of <= 28 ms with it open, none without), so
+    // normal use is clean at 3 (measured on an iPhone 17 Pro Max, 60x follow). `?dpr=N` overrides.
     const dprParam = Number(new URLSearchParams(location.search).get('dpr')) || 0;
-    renderer.setPixelRatio(dprParam > 0 ? dprParam : Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(dprParam > 0 ? dprParam : Math.min(window.devicePixelRatio || 1, 3));
     renderer.setSize(width, height);
     // linear output: see util/rawColor.ts
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
