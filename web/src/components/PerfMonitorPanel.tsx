@@ -3,8 +3,9 @@ import { collectDeviceInfo, copyText } from '../util/clipboard';
 import { FullPerfSnapshot } from './ConstellationView';
 
 /**
- * Diagnostics for the panel's own cost on phones (`?pp=noblur,frozen,hz1,mini,nochart`): the open
- * panel is a large backdrop-filter surface repainted 4x a second over the animating WebGL canvas.
+ * The open panel is a large backdrop-filter surface repainted 4x a second over the animating WebGL
+ * canvas; on an iPhone (dpr 3, 60x follow) that cost ~12 stalls/s, ~3/s without the blur, so it is
+ * drawn flat by default. Diagnostics: `?pp=blur,frozen,hz1,mini,nochart` (blur = the old look).
  */
 const PP = new Set(
   (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('pp') ?? '' : '')
@@ -268,7 +269,7 @@ export function PerfMonitorPanel({
 
   return (
     <div
-      className={`hud-panel${PP.has('noblur') ? ' perf-flat' : ''}`}
+      className={`hud-panel${PP.has('blur') ? '' : ' perf-flat'}`}
       style={{
         width: '100%',
         flexShrink: 0,
