@@ -5,16 +5,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "moon -C .. build --target wasm --release && node -e \"fs.copyFileSync('../_build/wasm/release/build/starlink-sim.wasm', 'public/assets/wasm/starlink-sim.wasm')\"",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "fetch:assets": "node scripts/fetch-assets.mjs",
-    "predev": "node scripts/fetch-assets.mjs",
-    "prebuild": "node scripts/fetch-assets.mjs",
-    "dev": "npm run build:wasm && vite",
-    "predev:lan": "node scripts/fetch-assets.mjs",
-    "dev:lan": "npm run build:wasm && vite --host",
-    "serve:lan": "npm run build && vite preview --host --port 4173",
-    "build": "npm run build:wasm && vite build",
-    "preview": "vite preview"
+    "dev": "node scripts/fetch-assets.mjs && node scripts/build-wasm.mjs && vite",
+    "dev:lan": "node scripts/fetch-assets.mjs && node scripts/build-wasm.mjs && vite --host",
+    "build": "node scripts/fetch-assets.mjs && node scripts/build-wasm.mjs && vite build",
+    "serve:lan": "node scripts/fetch-assets.mjs && node scripts/build-wasm.mjs && vite build && vite preview --host --port 4173",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",
