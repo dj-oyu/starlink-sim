@@ -137,7 +137,9 @@ export function Canvas({
       alpha: false,
     });
     // Cap at 3: on an iPhone (dpr 3) the GPU cost of 3x vs 2x measured only +0.35 ms/frame
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
+    // (`?dpr=N` overrides it for experiments)
+    const dprParam = Number(new URLSearchParams(location.search).get('dpr')) || 0;
+    renderer.setPixelRatio(dprParam > 0 ? dprParam : Math.min(window.devicePixelRatio || 1, 3));
     renderer.setSize(width, height);
     // linear output: see util/rawColor.ts
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
