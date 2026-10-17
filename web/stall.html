@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Stall probe</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #02050d; color: #cbd5e1; font: 14px/1.5 system-ui, sans-serif; }
+      #stage { position: fixed; inset: 0; overflow: hidden; }
+      #hud { position: fixed; left: 8px; top: 8px; right: 8px; z-index: 2; font: 12px/1.4 ui-monospace, monospace; color: #7dd3fc; text-shadow: 0 0 4px #000; pointer-events: none; }
+      #report { position: fixed; inset: 0; z-index: 3; overflow: auto; padding: 12px; background: #02050d; display: none; }
+      table { border-collapse: collapse; width: 100%; font: 11px/1.3 ui-monospace, monospace; }
+      th, td { border-bottom: 1px solid #1e293b; padding: 3px 4px; text-align: right; white-space: nowrap; }
+      th:first-child, td:first-child { text-align: left; white-space: normal; }
+      .bad { color: #f87171; } .ok { color: #34d399; }
+      button { font: inherit; padding: 10px 14px; margin: 6px 6px 6px 0; border-radius: 8px; border: 1px solid #38bdf8; background: #0c2a3d; color: #e0f2fe; }
+      textarea { width: 100%; height: 140px; background: #0b1220; color: #cbd5e1; border: 1px solid #1e293b; font: 11px ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="hud">準備中…</div>
+    <div id="report"></div>
+    <script type="module" src="/src/stall/main.ts"></script>
+  </body>
+</html>
