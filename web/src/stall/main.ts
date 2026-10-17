@@ -15,6 +15,8 @@ interface Exp {
   skipOdd?: boolean; // render every other frame (30 Hz)
   bigTex?: boolean; // 3 x 4096^2 textures with mipmaps (~270 MB), like the real Earth
   overlay?: 'blur' | 'flat'; // HUD-like DOM panels over the canvas (with / without backdrop-filter)
+  upload?: 'none' | 'partial' | 'full'; // per-frame vertex-buffer updates like the real app (anchors etc.)
+  comm?: boolean; // plus a small buffer fully rewritten every frame (comm links)
 }
 
 const WARMUP_S = 1.5;
@@ -48,6 +50,19 @@ const EXPS_B: Exp[] = [
   { id: 'B6', title: 'full+大テクスチャ+HUD(blur) / dpr2 / AA', dpr: 2, aa: true, scene: 'full', bigTex: true, overlay: 'blur' },
   { id: 'B7', title: 'full+大テクスチャ+HUD(blurなし) / dpr3 / AA', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'flat' },
   { id: 'B8', title: 'full+大テクスチャ+HUD(blur) / dpr3 / AAなし', dpr: 3, aa: false, scene: 'full', bigTex: true, overlay: 'blur' },
+];
+
+// Set C: B found no stall either (even big textures + HUD blur), so what is left is the real app's
+// per-frame dynamic vertex-buffer uploads (GPU anchors refreshed 1/30 per frame, comm links).
+const EXPS_C: Exp[] = [
+  { id: 'C1', title: 'full+属性追加 / dpr3 / 更新なし', dpr: 3, aa: true, scene: 'full', upload: 'none' },
+  { id: 'C2', title: 'full / dpr3 / 部分更新(1/30)', dpr: 3, aa: true, scene: 'full', upload: 'partial' },
+  { id: 'C3', title: 'full / dpr2 / 部分更新(1/30)', dpr: 2, aa: true, scene: 'full', upload: 'partial' },
+  { id: 'C4', title: 'full / dpr3 / 部分更新+通信リンク全更新', dpr: 3, aa: true, scene: 'full', upload: 'partial', comm: true },
+  { id: 'C5', title: 'full / dpr2 / 部分更新+通信リンク全更新', dpr: 2, aa: true, scene: 'full', upload: 'partial', comm: true },
+  { id: 'C6', title: 'full / dpr3 / 全体更新(毎フレーム)', dpr: 3, aa: true, scene: 'full', upload: 'full' },
+  { id: 'C7', title: 'full / dpr2 / 全体更新(毎フレーム)', dpr: 2, aa: true, scene: 'full', upload: 'full' },
+  { id: 'C8', title: '実アプリ相当(大テクスチャ+HUD blur+部分更新+通信) / dpr3', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'blur', upload: 'partial', comm: true },
 ];
 
 const stage = document.getElementById('stage') as HTMLDivElement;
@@ -92,7 +107,7 @@ function makeOverlay(kind: 'blur' | 'flat'): HTMLElement {
   return root;
 }
 
-function makeFullScene(bigTex: boolean) {
+function makeFullScene(bigTex: boolean, upload: 'none' | 'partial' | 'full', comm: boolean) {
   const scene = new THREE.Scene();
   // an Earth-like sphere: 4 texture fetches + a little math in the fragment shader (a stand-in for the real one)
   const small = makeTexture(1024);
@@ -123,12 +138,67 @@ function makeFullScene(bigTex: boolean) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const pts = new THREE.Points(
-    g,
-    new THREE.PointsMaterial({ size: 0.012, color: 0x7dd3fc, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
-  );
+  // dynamic vertex data like the GPU path: anchor position/velocity (2 x vec3) + anchor time, in two
+  // geometries (points + trail quads stand-in), each with its own GL buffers
+  const dyn: THREE.BufferAttribute[] = [];
+  const mkDyn = (geom: THREE.BufferGeometry) => {
+    for (const [name, size] of [['aPa', 3], ['aPb', 3], ['aT', 1]] as const) {
+      const a = new THREE.BufferAttribute(new Float32Array(n * size), size);
+      a.setUsage(THREE.DynamicDrawUsage);
+      geom.setAttribute(name, a);
+      dyn.push(a);
+    }
+  };
+  mkDyn(g);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    vertexShader:
+      'attribute vec3 aPa; attribute vec3 aPb; attribute float aT; void main(){ vec3 p=position+(aPa+aPb)*1e-9+vec3(aT*1e-9); gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0); gl_PointSize=3.0; }',
+    fragmentShader: 'void main(){ gl_FragColor=vec4(0.3,0.6,0.9,0.5); }',
+  });
+  const pts = new THREE.Points(g, mat);
   scene.add(pts);
-  return { scene, earth, pts };
+  // second geometry (trails stand-in): a second set of dynamic buffers on a few points
+  const g2 = new THREE.BufferGeometry();
+  g2.setAttribute('position', new THREE.BufferAttribute(pos.slice(), 3));
+  mkDyn(g2);
+  const pts2 = new THREE.Points(g2, mat);
+  scene.add(pts2);
+  // comm links: ~1200 segments rewritten every frame
+  const commArr = new Float32Array(3600 * 3);
+  const cg = new THREE.BufferGeometry();
+  const ca = new THREE.BufferAttribute(commArr, 3);
+  ca.setUsage(THREE.DynamicDrawUsage);
+  cg.setAttribute("position", ca);
+  if (!comm) cg.setDrawRange(0, 0);
+  const lines = new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.4 }));
+  lines.frustumCulled = false;
+  scene.add(lines);
+  let cursor = 0;
+  const update = () => {
+    if (upload === 'none') return;
+    const k = 30;
+    const lo = Math.floor((n * (cursor % k)) / k);
+    const hi = Math.floor((n * ((cursor % k) + 1)) / k);
+    cursor++;
+    for (const a of dyn) {
+      const sz = a.itemSize;
+      a.array[lo * sz] = cursor; // touch the data so it is not constant
+      if (upload === 'partial') {
+        a.clearUpdateRanges();
+        a.addUpdateRange(lo * sz, (hi - lo) * sz);
+      }
+      a.needsUpdate = true;
+    }
+    if (comm) {
+      for (let i = 0; i < 90; i++) commArr[i * 3] = Math.sin(cursor * 0.1 + i);
+      ca.needsUpdate = true;
+      cg.setDrawRange(0, 1200);
+    }
+  };
+  return { scene, earth, pts, update };
 }
 
 interface Result {
@@ -167,7 +237,7 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 100);
   camera.position.set(0, 0.4, 2.2);
   camera.lookAt(0, 0, 0);
-  const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex) : null;
+  const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex, exp.upload ?? 'none', !!exp.comm) : null;
   const overlay = exp.overlay ? makeOverlay(exp.overlay) : null;
   if (overlay) document.body.appendChild(overlay);
   const emptyScene = new THREE.Scene();
@@ -198,6 +268,7 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
         if (full) {
           full.earth.rotation.y += 0.002;
           full.pts.rotation.y += 0.002;
+          full.update();
           (full.earth.material as THREE.ShaderMaterial).uniforms.time.value = now / 1000;
         }
         const r0 = performance.now();
@@ -313,7 +384,8 @@ function show(results: Result[], startedAt: string) {
 async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
-  const all = params.get('set') === 'A' ? EXPS_A : EXPS_B;
+  const setName = params.get('set');
+  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : EXPS_C;
   const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
