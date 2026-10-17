@@ -23,6 +23,7 @@ interface Exp {
   nest?: boolean; // canvas inside nested containers like the app (100dvh, relative, overflow hidden)
   infoReset?: boolean; // renderer.info.autoReset=false + reset() every frame (the real app)
   linear?: boolean; // renderer.outputColorSpace = Linear (the real app)
+  c2d?: { count: number; hz: number; scale: number }; // 2D canvases (sky plot + perf chart) redrawn at `hz` (0 = every frame)
 }
 
 const WARMUP_S = 1.5;
@@ -83,6 +84,19 @@ const EXPS_D: Exp[] = [
   { id: 'D6', title: 'clear+alpha:false+Orbit+入れ子+info+Linear / dpr3', dpr: 3, aa: true, scene: 'clear', opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
   { id: 'D7', title: 'full+全部入り+大テクスチャ+HUD(blur)+更新 / dpr3', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'blur', upload: 'partial', comm: true, opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
   { id: 'D8', title: 'D7と同じ / dpr2', dpr: 2, aa: true, scene: 'full', bigTex: true, overlay: 'blur', upload: 'partial', comm: true, opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
+];
+
+// Set E (default): D found nothing either. The app also has 2D canvases (sky plot, perf chart) that
+// are redrawn ~4x a second at devicePixelRatio 3 - hidden HUD (visibility) does not stop that.
+const EXPS_E: Exp[] = [
+  { id: 'E0', title: 'full / dpr3 / 基準', dpr: 3, aa: true, scene: 'full' },
+  { id: 'E1', title: 'full / dpr3 / 2Dキャンバス1枚 4Hz (backing x3)', dpr: 3, aa: true, scene: 'full', c2d: { count: 1, hz: 4, scale: 3 } },
+  { id: 'E2', title: 'full / dpr3 / 2Dキャンバス2枚 4Hz (backing x3)', dpr: 3, aa: true, scene: 'full', c2d: { count: 2, hz: 4, scale: 3 } },
+  { id: 'E3', title: 'full / dpr3 / 2Dキャンバス2枚 4Hz (backing x1)', dpr: 3, aa: true, scene: 'full', c2d: { count: 2, hz: 4, scale: 1 } },
+  { id: 'E4', title: 'full / dpr3 / 2Dキャンバス2枚 毎フレーム (backing x3)', dpr: 3, aa: true, scene: 'full', c2d: { count: 2, hz: 0, scale: 3 } },
+  { id: 'E5', title: 'full / dpr2 / 2Dキャンバス2枚 4Hz (backing x3)', dpr: 2, aa: true, scene: 'full', c2d: { count: 2, hz: 4, scale: 3 } },
+  { id: 'E6', title: 'full / dpr3 / 2Dキャンバス2枚 1Hz (backing x3)', dpr: 3, aa: true, scene: 'full', c2d: { count: 2, hz: 1, scale: 3 } },
+  { id: 'E7', title: 'full / dpr3 / 基準 (再測定)', dpr: 3, aa: true, scene: 'full' },
 ];
 
 const stage = document.getElementById('stage') as HTMLDivElement;
@@ -278,6 +292,40 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   if (overlay) document.body.appendChild(overlay);
   const emptyScene = new THREE.Scene();
   const buffer = `${renderer.domElement.width}x${renderer.domElement.height}`;
+  // 2D canvases like the sky plot (280x280 css) and the perf chart (400x80 css), shown over the canvas
+  const c2ds: { ctx: CanvasRenderingContext2D; w: number; h: number; el: HTMLCanvasElement }[] = [];
+  if (exp.c2d) {
+    const sizes = [[280, 280], [400, 80]];
+    for (let i = 0; i < exp.c2d.count; i++) {
+      const [cw, ch] = sizes[i];
+      const el = document.createElement('canvas');
+      el.width = cw * exp.c2d.scale;
+      el.height = ch * exp.c2d.scale;
+      el.style.cssText = `position:fixed;z-index:1;left:8px;top:${8 + i * 300}px;width:${cw}px;height:${ch}px;background:rgba(8,16,32,.5);border-radius:8px`;
+      document.body.appendChild(el);
+      c2ds.push({ ctx: el.getContext('2d')!, w: cw, h: ch, el });
+    }
+  }
+  let lastC2d = 0;
+  const drawC2d = (now: number) => {
+    for (const c of c2ds) {
+      const { ctx, w, h } = c;
+      ctx.setTransform(c.el.width / w, 0, 0, c.el.height / h, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = 'rgba(148,163,184,.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, Math.min(w, h) / 2 - 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#34d399';
+      for (let k = 0; k < 70; k++) {
+        const a = k * 0.7 + now / 1000;
+        ctx.beginPath();
+        ctx.arc(w / 2 + Math.cos(a) * (k % 9) * 12, h / 2 + Math.sin(a) * (k % 9) * 9, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  };
 
   const intervals: number[] = [];
   const hitchAt: number[] = [];
@@ -306,6 +354,10 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
           full.pts.rotation.y += 0.002;
           full.update();
           (full.earth.material as THREE.ShaderMaterial).uniforms.time.value = now / 1000;
+        }
+        if (c2ds.length && (exp.c2d!.hz === 0 || now - lastC2d >= 1000 / exp.c2d!.hz)) {
+          lastC2d = now;
+          drawC2d(now);
         }
         controls?.update();
         if (exp.infoReset) renderer.info.reset();
@@ -350,6 +402,7 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   full?.earth.geometry.dispose();
   const mat = full?.earth.material as THREE.ShaderMaterial | undefined;
   if (mat) for (const k of ['t0', 't1', 't2']) (mat.uniforms[k].value as THREE.Texture).dispose();
+  c2ds.forEach((c) => c.el.remove());
   controls?.dispose();
   renderer.dispose();
   renderer.forceContextLoss();
@@ -424,7 +477,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
   const setName = params.get('set');
-  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : EXPS_D;
+  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : EXPS_E;
   const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
