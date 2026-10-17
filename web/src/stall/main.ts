@@ -23,6 +23,7 @@ interface Exp {
   nest?: boolean; // canvas inside nested containers like the app (100dvh, relative, overflow hidden)
   infoReset?: boolean; // renderer.info.autoReset=false + reset() every frame (the real app)
   linear?: boolean; // renderer.outputColorSpace = Linear (the real app)
+  staticOverlay?: boolean; // HUD-like blur panels without the 4 Hz text update
   perfPanel?: { blur: boolean; lite: boolean }; // a copy of the real Perf panel (372x487, ~60 nodes, 4 Hz updates)
   realTex?: number; // load the real Earth JPEG textures (4096^2) with this anisotropy instead of generated ones
   c2d?: { count: number; hz: number; scale: number }; // 2D canvases (sky plot + perf chart) redrawn at `hz` (0 = every frame)
@@ -183,6 +184,22 @@ function makePerfPanel(v: { blur: boolean; lite: boolean }): HTMLElement {
   return root;
 }
 
+// Set H (default): set G reproduced the stall (3.38/s, ~300 ms) in EVERY variant, even without the
+// Perf replica, so it comes from the common base. Take things away / add them back one at a time.
+const { realTex: _rt, overlay: _ov, upload: _up, comm: _cm, ...GB0 } = GBASE;
+const EXPS_H: Exp[] = [
+  { id: 'H1', title: '土台 (実テクスチャ+HUD blur+更新+リンク) 再現', ...GBASE },
+  { id: 'H2', title: '土台 + alpha:false', ...GBASE, opaque: true },
+  { id: 'H3', title: '土台 - HUD overlay', ...GB0, realTex: 8, upload: 'partial', comm: true },
+  { id: 'H4', title: '土台 - リンク更新', ...GB0, realTex: 8, overlay: 'blur', upload: 'partial' },
+  { id: 'H5', title: '土台 - バッファ更新', ...GB0, realTex: 8, overlay: 'blur', comm: true },
+  { id: 'H6', title: '土台 実テクスチャ→生成4096', ...GB0, bigTex: true, overlay: 'blur', upload: 'partial', comm: true },
+  { id: 'H7', title: '土台 + 全部入り(opaque/orbit/入れ子/info/linear)', ...GBASE, opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
+  { id: 'H8', title: '土台 dpr2', ...GBASE, dpr: 2 },
+  { id: 'H9', title: '土台 - HUD overlay の時計更新(静的blur)', ...GBASE, overlay: 'blur', staticOverlay: true },
+  { id: 'H10', title: '土台 再現 (2回目)', ...GBASE },
+];
+
 const stage = document.getElementById('stage') as HTMLDivElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
 const report = document.getElementById('report') as HTMLDivElement;
@@ -205,7 +222,7 @@ function makeTexture(size: number): THREE.DataTexture {
 }
 
 /** HUD-like panels (header, sheet, time bar) over the canvas; one of them updates 4x a second. */
-function makeOverlay(kind: 'blur' | 'flat'): HTMLElement {
+function makeOverlay(kind: 'blur' | 'flat', staticOnly = false): HTMLElement {
   const root = document.createElement('div');
   root.style.cssText = 'position:fixed;inset:0;z-index:1;pointer-events:none';
   const panel = (css: string) => {
@@ -218,9 +235,11 @@ function makeOverlay(kind: 'blur' | 'flat'): HTMLElement {
   panel('top:8px;height:52px');
   panel('bottom:210px;height:72px');
   const bar = panel('bottom:8px;height:140px;color:#7dd3fc;font:14px monospace;padding:8px');
-  const timer = window.setInterval(() => {
-    bar.textContent = new Date().toISOString();
-  }, 250);
+  const timer = staticOnly
+    ? 0
+    : window.setInterval(() => {
+        bar.textContent = new Date().toISOString();
+      }, 250);
   (root as unknown as { stop: () => void }).stop = () => window.clearInterval(timer);
   return root;
 }
@@ -388,7 +407,7 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
     if (exp.scene === 'clear') real.forEach((t) => renderer.initTexture(t)); // resident on the GPU but unused
   }
   const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex, exp.upload ?? 'none', !!exp.comm, real) : null;
-  const overlay = exp.overlay ? makeOverlay(exp.overlay) : null;
+  const overlay = exp.overlay ? makeOverlay(exp.overlay, !!exp.staticOverlay) : null;
   if (overlay) document.body.appendChild(overlay);
   const perfPanel = exp.perfPanel ? makePerfPanel(exp.perfPanel) : null;
   if (perfPanel) document.body.appendChild(perfPanel);
@@ -582,7 +601,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
   const setName = params.get('set');
-  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : setName === 'E' ? EXPS_E : setName === 'F' ? EXPS_F : EXPS_G;
+  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : setName === 'D' ? EXPS_D : setName === 'E' ? EXPS_E : setName === 'F' ? EXPS_F : setName === 'G' ? EXPS_G : EXPS_H;
   const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
