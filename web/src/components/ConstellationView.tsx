@@ -6,6 +6,7 @@ import {
   ObserverConfig,
   EARTH_RADIUS_KM,
   latLonAltToThree,
+  gmstRad,
   SatelliteTelemetry,
 } from '../wasm/simEngine';
 import { EarthGlobe, EarthVisualSettings } from './EarthGlobe';
@@ -260,6 +261,11 @@ const _followQuat = new THREE.Quaternion();
 
 // Follow-camera distance limits (measured from the satellite) and the keep-out radius around the
 // Earth (Earth radius = 1) so the camera can never end up inside the globe.
+/** Capacity (points) of the orbit / ground-track line buffers; paths use 141 points. */
+const ORBIT_CAP = 160;
+/** The orbit line covers +-48 min around its calculation time; recompute well before the satellite nears an end. */
+const ORBIT_RECALC_MS = 10 * 60 * 1000;
+
 const FOLLOW_MIN_DIST = 0.12;
 const FOLLOW_MAX_DIST = 3;
 const FOLLOW_START_MIN = 0.3;
@@ -292,6 +298,7 @@ export function ConstellationView({
   const sunDirectionRef = useRef<[number, number, number]>([1, 0, 0]);
 
   const commLinesGeomRef = useRef<THREE.BufferGeometry | null>(null);
+  const orbitLineRef = useRef<THREE.Line | null>(null);
   const orbitLineGeomRef = useRef<THREE.BufferGeometry | null>(null);
   const groundTrackGeomRef = useRef<THREE.BufferGeometry | null>(null);
   const selectedMarkerRef = useRef<THREE.Group | null>(null);
@@ -485,6 +492,9 @@ export function ConstellationView({
     const orbitLine = new THREE.Line(orbitGeom, orbitMat);
     orbitLine.frustumCulled = false;
     group.add(orbitLine);
+    orbitGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ORBIT_CAP * 3), 3));
+    orbitGeom.setDrawRange(0, 0);
+    orbitLineRef.current = orbitLine;
     orbitLineGeomRef.current = orbitGeom;
 
     const gtGeom = new THREE.BufferGeometry();
@@ -496,6 +506,8 @@ export function ConstellationView({
     const gtLine = new THREE.Line(gtGeom, gtMat);
     gtLine.frustumCulled = false;
     group.add(gtLine);
+    gtGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ORBIT_CAP * 3), 3));
+    gtGeom.setDrawRange(0, 0);
     groundTrackGeomRef.current = gtGeom;
 
     // 4. Ground Station Group (Pin + FOV Circle + Comm Link Beams)
@@ -650,10 +662,12 @@ export function ConstellationView({
     idx: number | null;
     timeMs: number;
     gt: boolean;
+    gmst0: number;
   }>({
     idx: null,
     timeMs: 0,
     gt: false,
+    gmst0: 0,
   });
   const prevSelectedPosRef = useRef<THREE.Vector3 | null>(null);
 
@@ -1040,13 +1054,14 @@ export function ConstellationView({
 
       if (
         lastOrbitCalcRef.current.idx !== selectedSatIndex ||
-        Math.abs(currentSimMs - lastOrbitCalcRef.current.timeMs) > 15000 ||
+        Math.abs(currentSimMs - lastOrbitCalcRef.current.timeMs) > ORBIT_RECALC_MS ||
         lastOrbitCalcRef.current.gt !== showGroundTrack
       ) {
         lastOrbitCalcRef.current = {
           idx: selectedSatIndex,
           timeMs: currentSimMs,
           gt: showGroundTrack,
+          gmst0: 0,
         };
         const inertialPts = engine.getOrbitPathThree(
           selectedSatIndex,
@@ -1055,52 +1070,43 @@ export function ConstellationView({
           140,
           false,
         );
-        if (orbitLineGeomRef.current && inertialPts.length > 1) {
-          const flat = new Float32Array(inertialPts.length * 3);
-          for (let i = 0; i < inertialPts.length; i++) {
-            flat[i * 3] = inertialPts[i][0];
-            flat[i * 3 + 1] = inertialPts[i][1];
-            flat[i * 3 + 2] = inertialPts[i][2];
+        lastOrbitCalcRef.current.gmst0 = gmstRad(currentSimMs);
+        const og = orbitLineGeomRef.current;
+        if (og) {
+          const arr = (og.getAttribute('position') as THREE.BufferAttribute).array as Float32Array;
+          const n = Math.min(inertialPts.length, ORBIT_CAP);
+          for (let i = 0; i < n; i++) {
+            arr[i * 3] = inertialPts[i][0];
+            arr[i * 3 + 1] = inertialPts[i][1];
+            arr[i * 3 + 2] = inertialPts[i][2];
           }
-          orbitLineGeomRef.current.setAttribute(
-            'position',
-            new THREE.BufferAttribute(flat, 3),
-          );
+          og.setDrawRange(0, n > 1 ? n : 0);
+          (og.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
         }
 
-        if (groundTrackGeomRef.current) {
+        const gg = groundTrackGeomRef.current;
+        if (gg) {
+          let n = 0;
           if (showGroundTrack) {
-            const gtPts = engine.getOrbitPathThree(
-              selectedSatIndex,
-              currentSimMs,
-              48.0,
-              140,
-              true,
-            );
-            const flatGt = new Float32Array(gtPts.length * 3);
-            for (let i = 0; i < gtPts.length; i++) {
-              const v = new THREE.Vector3(
-                gtPts[i][0],
-                gtPts[i][1],
-                gtPts[i][2],
-              )
-                .normalize()
-                .multiplyScalar(1.003);
-              flatGt[i * 3] = v.x;
-              flatGt[i * 3 + 1] = v.y;
-              flatGt[i * 3 + 2] = v.z;
+            const gtPts = engine.getOrbitPathThree(selectedSatIndex, currentSimMs, 48.0, 140, true);
+            const arr = (gg.getAttribute('position') as THREE.BufferAttribute).array as Float32Array;
+            n = Math.min(gtPts.length, ORBIT_CAP);
+            for (let i = 0; i < n; i++) {
+              const l = 1.003 / (Math.hypot(gtPts[i][0], gtPts[i][1], gtPts[i][2]) || 1);
+              arr[i * 3] = gtPts[i][0] * l;
+              arr[i * 3 + 1] = gtPts[i][1] * l;
+              arr[i * 3 + 2] = gtPts[i][2] * l;
             }
-            groundTrackGeomRef.current.setAttribute(
-              'position',
-              new THREE.BufferAttribute(flatGt, 3),
-            );
-          } else {
-            groundTrackGeomRef.current.setAttribute(
-              'position',
-              new THREE.BufferAttribute(new Float32Array(0), 3),
-            );
+            (gg.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
           }
+          gg.setDrawRange(0, n > 1 ? n : 0);
         }
+      }
+
+      // The orbit line is computed in the Earth-fixed frame of its calculation time; as the Earth
+      // turns, carry it along (the ground track is Earth-fixed and needs no correction).
+      if (orbitLineRef.current) {
+        orbitLineRef.current.rotation.y = -(gmstRad(currentSimMs) - lastOrbitCalcRef.current.gmst0);
       }
 
       if (followSelected) {
@@ -1137,16 +1143,8 @@ export function ConstellationView({
       }
       if (orbitLineGeomRef.current && lastOrbitCalcRef.current.idx !== null) {
         lastOrbitCalcRef.current.idx = null;
-        orbitLineGeomRef.current.setAttribute(
-          'position',
-          new THREE.BufferAttribute(new Float32Array(0), 3),
-        );
-        if (groundTrackGeomRef.current) {
-          groundTrackGeomRef.current.setAttribute(
-            'position',
-            new THREE.BufferAttribute(new Float32Array(0), 3),
-          );
-        }
+        orbitLineGeomRef.current.setDrawRange(0, 0);
+        groundTrackGeomRef.current?.setDrawRange(0, 0);
       }
     }
 
