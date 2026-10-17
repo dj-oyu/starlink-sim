@@ -2,6 +2,7 @@
 // interval statistics of each, and reports a table + JSON. It exists to separate the causes of the
 // periodic display stalls seen on iPhone at devicePixelRatio 3 (see the Perf "recentHitches").
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 type SceneKind = 'clear' | 'full';
 interface Exp {
@@ -17,6 +18,11 @@ interface Exp {
   overlay?: 'blur' | 'flat'; // HUD-like DOM panels over the canvas (with / without backdrop-filter)
   upload?: 'none' | 'partial' | 'full'; // per-frame vertex-buffer updates like the real app (anchors etc.)
   comm?: boolean; // plus a small buffer fully rewritten every frame (comm links)
+  opaque?: boolean; // WebGL context with alpha:false (the real app)
+  orbit?: boolean; // OrbitControls attached to the canvas (touch-action:none, pointer listeners)
+  nest?: boolean; // canvas inside nested containers like the app (100dvh, relative, overflow hidden)
+  infoReset?: boolean; // renderer.info.autoReset=false + reset() every frame (the real app)
+  linear?: boolean; // renderer.outputColorSpace = Linear (the real app)
 }
 
 const WARMUP_S = 1.5;
@@ -63,6 +69,20 @@ const EXPS_C: Exp[] = [
   { id: 'C6', title: 'full / dpr3 / 全体更新(毎フレーム)', dpr: 3, aa: true, scene: 'full', upload: 'full' },
   { id: 'C7', title: 'full / dpr2 / 全体更新(毎フレーム)', dpr: 2, aa: true, scene: 'full', upload: 'full' },
   { id: 'C8', title: '実アプリ相当(大テクスチャ+HUD blur+部分更新+通信) / dpr3', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'blur', upload: 'partial', comm: true },
+];
+
+// Set D (default): C found nothing either, but the REAL app stalls even with an empty scene. These
+// add the remaining renderer / page differences of the app, one at a time and then all together.
+const EXPS_D: Exp[] = [
+  { id: 'D0', title: 'full / dpr3 / 基準', dpr: 3, aa: true, scene: 'full' },
+  { id: 'D1', title: 'full / dpr3 / alpha:false', dpr: 3, aa: true, scene: 'full', opaque: true },
+  { id: 'D2', title: 'full / dpr3 / OrbitControls', dpr: 3, aa: true, scene: 'full', orbit: true },
+  { id: 'D3', title: 'full / dpr3 / 入れ子コンテナ(100dvh)', dpr: 3, aa: true, scene: 'full', nest: true },
+  { id: 'D4', title: 'full / dpr3 / info.autoReset=false', dpr: 3, aa: true, scene: 'full', infoReset: true },
+  { id: 'D5', title: 'full / dpr3 / outputColorSpace=Linear', dpr: 3, aa: true, scene: 'full', linear: true },
+  { id: 'D6', title: 'clear+alpha:false+Orbit+入れ子+info+Linear / dpr3', dpr: 3, aa: true, scene: 'clear', opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
+  { id: 'D7', title: 'full+全部入り+大テクスチャ+HUD(blur)+更新 / dpr3', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'blur', upload: 'partial', comm: true, opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
+  { id: 'D8', title: 'D7と同じ / dpr2', dpr: 2, aa: true, scene: 'full', bigTex: true, overlay: 'blur', upload: 'partial', comm: true, opaque: true, orbit: true, nest: true, infoReset: true, linear: true },
 ];
 
 const stage = document.getElementById('stage') as HTMLDivElement;
@@ -223,20 +243,36 @@ function pct(sorted: number[], p: number): number {
 
 async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   stage.innerHTML = '';
+  let host: HTMLElement = stage;
+  if (exp.nest) {
+    // like the app: a 100dvh root > relative 100% wrapper > canvas
+    const outer = document.createElement('div');
+    outer.style.cssText = 'position:absolute;inset:0;height:100dvh;overflow:hidden';
+    const inner = document.createElement('div');
+    inner.style.cssText = 'width:100%;height:100%;position:relative';
+    outer.appendChild(inner);
+    stage.appendChild(outer);
+    host = inner;
+  }
   const w = window.innerWidth;
   const h = Math.round(window.innerHeight * (exp.heightFrac ?? 1));
   const renderer = new THREE.WebGLRenderer({
     antialias: exp.aa,
+    alpha: !exp.opaque,
     powerPreference: 'high-performance',
     preserveDrawingBuffer: !!exp.preserve,
   });
   renderer.setPixelRatio(exp.dpr);
   renderer.setSize(w, h);
   renderer.setClearColor(0x02050d, 1);
-  stage.appendChild(renderer.domElement);
+  if (exp.linear) renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  if (exp.infoReset) renderer.info.autoReset = false;
+  host.appendChild(renderer.domElement);
   const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 100);
   camera.position.set(0, 0.4, 2.2);
   camera.lookAt(0, 0, 0);
+  const controls = exp.orbit ? new OrbitControls(camera, renderer.domElement) : null;
+  if (controls) controls.enableDamping = true;
   const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex, exp.upload ?? 'none', !!exp.comm) : null;
   const overlay = exp.overlay ? makeOverlay(exp.overlay) : null;
   if (overlay) document.body.appendChild(overlay);
@@ -271,6 +307,8 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
           full.update();
           (full.earth.material as THREE.ShaderMaterial).uniforms.time.value = now / 1000;
         }
+        controls?.update();
+        if (exp.infoReset) renderer.info.reset();
         const r0 = performance.now();
         renderer.render(full ? full.scene : emptyScene, camera);
         if (performance.now() - r0 > 8 && elapsed > WARMUP_S) slowSubmits++;
@@ -312,6 +350,7 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   full?.earth.geometry.dispose();
   const mat = full?.earth.material as THREE.ShaderMaterial | undefined;
   if (mat) for (const k of ['t0', 't1', 't2']) (mat.uniforms[k].value as THREE.Texture).dispose();
+  controls?.dispose();
   renderer.dispose();
   renderer.forceContextLoss();
   stage.innerHTML = '';
@@ -385,7 +424,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
   const setName = params.get('set');
-  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : EXPS_C;
+  const all = setName === 'A' ? EXPS_A : setName === 'B' ? EXPS_B : setName === 'C' ? EXPS_C : EXPS_D;
   const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
