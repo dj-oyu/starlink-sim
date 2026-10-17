@@ -2,6 +2,7 @@ import { createContext, ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { PostFx } from './postFx';
 
 export type FrameCallback = (state: ThreeContextState, delta: number) => void;
 
@@ -26,6 +27,8 @@ export interface ThreeContextState {
   controls: OrbitControls;
   perfStats: RenderPerfStats;
   registerFrame: (cb: FrameCallback) => () => void;
+  /** Draws one frame the way the main loop does (through the post pass when it is on). */
+  renderFrame: () => void;
 }
 
 const ThreeContext = createContext<ThreeContextState | null>(null);
@@ -57,6 +60,8 @@ interface CanvasProps {
   children?: ComponentChildren;
   cameraPosition?: [number, number, number];
   fov?: number;
+  /** Vignette + peripheral chromatic aberration/blur pass (renders through an off-screen target). */
+  postFx?: boolean;
   onCanvasClick?: (
     raycaster: THREE.Raycaster,
     event: MouseEvent,
@@ -68,6 +73,7 @@ export function Canvas({
   children,
   cameraPosition = [0, 0.85, 2.55],
   fov = 45,
+  postFx = false,
   onCanvasClick,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -75,6 +81,8 @@ export function Canvas({
   const frameListenersRef = useRef<FrameCallback[]>([]);
   const onCanvasClickRef = useRef(onCanvasClick);
   onCanvasClickRef.current = onCanvasClick;
+  const postFxOnRef = useRef(postFx);
+  postFxOnRef.current = postFx;
 
   const registerFrame = useMemo(
     () => (cb: FrameCallback) => {
@@ -134,6 +142,8 @@ export function Canvas({
       programs: 0,
     };
 
+    renderer.info.autoReset = false;
+    let post: PostFx | null = null;
     const state: ThreeContextState = {
       scene,
       camera,
@@ -141,6 +151,14 @@ export function Canvas({
       controls,
       perfStats,
       registerFrame,
+      renderFrame: () => {
+        if (postFxOnRef.current) {
+          post ??= new PostFx();
+          post.render(renderer, scene, camera);
+        } else {
+          renderer.render(scene, camera);
+        }
+      },
     };
     setCtxState(state);
     threeHandleRef.current = state;
@@ -217,8 +235,9 @@ export function Canvas({
         listeners[i](state, delta);
       }
 
+      renderer.info.reset(); // two render calls per frame with the post pass: count both
       const r0 = performance.now();
-      renderer.render(scene, camera);
+      state.renderFrame();
       const r1 = performance.now();
 
       perfStats.webglRenderMs = r1 - r0;
@@ -238,6 +257,7 @@ export function Canvas({
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('click', onClick);
       controls.dispose();
+      post?.dispose();
       renderer.dispose();
     };
   }, []);

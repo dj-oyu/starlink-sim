@@ -38,7 +38,7 @@ function syncRenderMs(h: ThreeContextState, n = 20, reps = 7): Timing {
   const px = new Uint8Array(4);
   const once = () => {
     const t0 = performance.now();
-    for (let i = 0; i < n; i++) renderer.render(scene, camera);
+    for (let i = 0; i < n; i++) h.renderFrame();
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); // forces the GPU to finish
     return (performance.now() - t0) / n;
   };

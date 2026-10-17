@@ -267,6 +267,9 @@ export function App() {
   const sliderInputRef = useRef<HTMLInputElement>(null);
   const datetimeInputRef = useRef<HTMLInputElement>(null);
 
+  // Peripheral chromatic aberration / blur / vignette (off-screen pass; off by default)
+  const [postFx, setPostFx] = useState(false);
+
   // Earth Visual Settings
   const [visualSettings, setVisualSettings] = useState<EarthVisualSettings>({
     mode: 'photoreal',
@@ -771,6 +774,7 @@ export function App() {
         <Canvas
           cameraPosition={[0, 0.85, 2.55]}
           fov={45}
+          postFx={postFx}
           onCanvasClick={handleCanvasClick}
         >
           <ConstellationView
@@ -941,6 +945,10 @@ export function App() {
                     }
                   />
                   光学演出 (Lens flare)
+                </label>
+                <label className="menu-check">
+                  <input type="checkbox" checked={postFx} onChange={() => setPostFx((v) => !v)} />
+                  周辺の色収差・ぼかし (Lens FX)
                 </label>
               </div>
             )}
