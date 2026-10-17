@@ -1,14 +1,93 @@
 :root {
+  /* surfaces */
   --bg-glass: rgba(9, 14, 28, 0.78);
   --bg-glass-strong: rgba(7, 11, 22, 0.9);
   --border-subtle: rgba(56, 189, 248, 0.22);
   --border-bright: rgba(56, 189, 248, 0.55);
+  --border-hover: rgba(56, 189, 248, 0.45);
+  --shadow-panel: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  /* controls (buttons, selects) and form fields */
+  --control-bg: rgba(30, 41, 59, 0.75);
+  --control-bg-hover: rgba(51, 65, 85, 0.85);
+  --control-border: rgba(148, 163, 184, 0.25);
+  --field-bg: rgba(15, 23, 42, 0.85);
+  --field-border: rgba(148, 163, 184, 0.3);
+  --scrollbar-thumb: rgba(148, 163, 184, 0.3);
+  --focus-ring: 2px solid var(--accent-cyan);
+
+  /* accents & text */
   --accent-cyan: #38bdf8;
+  --accent-cyan-soft: #7dd3fc;
   --accent-emerald: #10b981;
+  --accent-emerald-soft: #6ee7b7;
   --accent-gold: #fde047;
   --text-main: #f1f5f9;
+  --text-soft: #cbd5e1;
   --text-dim: #94a3b8;
+  --text-faint: #64748b;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+
+  /* radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* map-style camera buttons (bottom-right) */
+  --fab-size: 40px;
+  /* follow + ground station + rotate + home + zoom pair (2) and 4 gaps of 8px */
+  --fab-stack-h: calc(var(--fab-size) * 6 + 32px);
+  /* horizontal room kept free for the button column */
+  --fab-gutter: 52px;
+
+  /* Stacking order. Inside .hud-root (z 10, its own stacking context):
+       search card 6 < header 20 < satellite sheet 25 < header while the Display menu is open 30.
+     The TLE / bench modals sit outside .hud-root at 50. */
+  --z-canvas: 1;
+  --z-hud: 10;
+  --z-search: 6;
+  --z-header: 20;
+  --z-sheet: 25;
+  --z-header-menu: 30;
+  --z-modal: 50;
 }
+
+/* ---------------------------------------------------------------- global */
+
+/* Slim scrollbars for every scroll area (sidebar, satellite list, menus, ...) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-xs);
+}
+
+/* Avoid double-tap-to-zoom delays on controls (all platforms) */
+button,
+select,
+label,
+.fab {
+  touch-action: manipulation;
+}
+
+/* The page sets user-select: none; text fields must stay selectable/editable (TLE paste, search) */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ---------------------------------------------------------------- layout */
 
 .sim-layout {
   position: relative;
@@ -22,421 +101,11 @@
 .canvas-wrapper {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: var(--z-canvas);
 }
 
 .canvas-wrapper.pick-cursor {
   cursor: crosshair;
-}
-
-/* Glassmorphic HUD panels */
-.hud-panel {
-  background: var(--bg-glass);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  color: var(--text-main);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-}
-
-/* Top Bar */
-.top-bar {
-  position: relative;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.brand-block {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.brand-title {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.badge-wasm {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(56, 189, 248, 0.16);
-  border: 1px solid rgba(56, 189, 248, 0.45);
-  color: var(--accent-cyan);
-  letter-spacing: 0.05em;
-}
-
-.metrics-row {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  font-size: 12px;
-}
-
-.metric-item {
-  display: flex;
-  flex-direction: column;
-}
-
-.metric-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.metric-value {
-  font-family: 'JetBrains Mono', 'Consolas', monospace;
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-}
-
-.metric-value.emerald {
-  color: #34d399;
-}
-
-.metric-value.cyan {
-  color: var(--accent-cyan);
-}
-
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-/* Buttons */
-.btn {
-  background: rgba(30, 41, 59, 0.75);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  color: var(--text-main);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 5px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  transition: all 0.15s ease;
-}
-
-.btn:hover {
-  background: rgba(51, 65, 85, 0.85);
-  border-color: rgba(56, 189, 248, 0.45);
-}
-
-.btn.active {
-  background: rgba(14, 165, 233, 0.25);
-  border-color: var(--accent-cyan);
-  color: #7dd3fc;
-}
-
-.btn.active-emerald {
-  background: rgba(16, 185, 129, 0.25);
-  border-color: var(--accent-emerald);
-  color: #6ee7b7;
-}
-
-/* Left Sidebar */
-.left-sidebar {
-  width: 320px;
-  flex-shrink: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.left-sidebar::-webkit-scrollbar {
-  width: 5px;
-}
-
-.left-sidebar::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
-  border-radius: 4px;
-}
-
-.panel-section {
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #bae6fd;
-}
-
-/* Search & Inputs */
-.input-text,
-.select-box {
-  width: 100%;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 6px;
-  padding: 6px 9px;
-  color: #fff;
-  font-size: 12px;
-  outline: none;
-}
-
-.input-text:focus,
-.select-box:focus {
-  border-color: var(--accent-cyan);
-}
-
-.coord-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.field-label {
-  font-size: 10px;
-  color: var(--text-dim);
-  margin-bottom: 2px;
-  display: block;
-}
-
-.preset-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.chip {
-  font-size: 10px;
-  padding: 3px 7px;
-  border-radius: 4px;
-  background: rgba(30, 41, 59, 0.7);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  color: #cbd5e1;
-  cursor: pointer;
-}
-
-.chip:hover,
-.chip.active {
-  background: rgba(16, 185, 129, 0.22);
-  border-color: var(--accent-emerald);
-  color: #a7f3d0;
-}
-
-/* Shell filter list */
-.shell-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.shell-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.55);
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  cursor: pointer;
-  font-size: 11px;
-  transition: all 0.12s;
-}
-
-.shell-row.disabled {
-  opacity: 0.42;
-}
-
-.shell-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.shell-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-}
-
-.shell-count {
-  font-family: monospace;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-/* Satellite mini list */
-.sat-list {
-  max-height: 135px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sat-list-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 8px;
-  border-radius: 5px;
-  background: rgba(15, 23, 42, 0.65);
-  border: 1px solid transparent;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.sat-list-item:hover {
-  border-color: rgba(56, 189, 248, 0.4);
-  background: rgba(30, 41, 59, 0.85);
-}
-
-.sat-list-item.selected {
-  border-color: var(--accent-gold);
-  background: rgba(250, 204, 21, 0.14);
-}
-
-/* Right Telemetry Card */
-.right-inspector {
-  width: 100%;
-  flex-shrink: 0;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.telemetry-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.telemetry-box {
-  background: rgba(15, 23, 42, 0.65);
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 6px;
-  padding: 7px 9px;
-}
-
-.telemetry-val {
-  font-family: 'JetBrains Mono', 'Consolas', monospace;
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-  margin-top: 2px;
-}
-
-/* Bottom Time Control Bar */
-.bottom-timebar {
-  padding: 10px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.timebar-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.time-readout {
-  font-family: 'JetBrains Mono', 'Consolas', monospace;
-  font-size: 14px;
-  font-weight: 700;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.speed-buttons {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.timeline-slider-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.datetime-input {
-  width: 175px;
-  font-size: 11px;
-  padding: 4px 7px;
-}
-
-.timeline-slider {
-  flex: 1;
-  accent-color: var(--accent-cyan);
-  cursor: pointer;
-}
-
-/* Modal */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(2, 6, 23, 0.75);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-card {
-  width: 540px;
-  max-width: 92vw;
-  max-height: calc(100dvh - 24px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.tle-textarea {
-  width: 100%;
-  height: 180px;
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 6px;
-  color: #e2e8f0;
-  font-family: monospace;
-  font-size: 11px;
-  padding: 8px;
-  resize: vertical;
 }
 
 /* HUD overlay: header / (left | right) / footer flow in one column so panels
@@ -445,7 +114,10 @@
 .hud-root {
   position: absolute;
   inset: 12px;
-  z-index: 10;
+  /* keep clear of the notch / home indicator (iPad, landscape phones above the 900px breakpoint) */
+  inset: calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right))
+    calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  z-index: var(--z-hud);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -475,13 +147,109 @@
 
 .right-column {
   width: 320px;
-  max-height: calc(100% - 200px);
+  /* stop above the camera buttons, which share the right edge */
+  max-height: calc(100% - var(--fab-stack-h) - 12px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   pointer-events: none;
+}
+
+/* Glassmorphic HUD panels */
+.hud-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  color: var(--text-main);
+  box-shadow: var(--shadow-panel);
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.top-bar {
+  position: relative;
+  z-index: var(--z-header);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* the open Display menu must stay above the satellite sheet */
+.top-bar:has(.menu-popover) {
+  z-index: var(--z-header-menu);
+}
+
+.top-bar--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.metrics-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 12px;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.metric-value.emerald {
+  color: #34d399;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  /* stay at the right edge even when the header wraps (the Display menu opens leftwards from here) */
+  margin-left: auto;
 }
 
 /* Display popover */
@@ -493,8 +261,14 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 30;
+  z-index: 30; /* local to the header */
   width: 250px;
+  /* room for a header wrapped onto two rows */
+  max-height: calc(100vh - 140px);
+  max-height: calc(100dvh - 140px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -516,12 +290,226 @@
   cursor: pointer;
 }
 
+/* ---------------------------------------------------------------- controls */
+
+.btn {
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+/* hover only where a real pointer hovers (no sticky hover after a tap on iOS);
+   :where() keeps the specificity at .btn:hover so .active / .active-emerald still win */
+@media (hover: hover) {
+  .btn:hover:where(:not(:disabled)) {
+    background: var(--control-bg-hover);
+    border-color: var(--border-hover);
+  }
+}
+
+/* icon-only time-bar buttons (play / LIVE / TLE epoch), same on every screen size */
+.tb-btn {
+  min-width: 40px;
+  min-height: 40px;
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.btn.active {
+  background: rgba(14, 165, 233, 0.25);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan-soft);
+}
+
+.btn.active-emerald {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: var(--accent-emerald);
+  color: var(--accent-emerald-soft);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-main);
+  }
+}
+
+.chip {
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--text-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .chip:hover:where(:not(:disabled)) {
+    background: rgba(16, 185, 129, 0.22);
+    border-color: var(--accent-emerald);
+    color: #a7f3d0;
+  }
+}
+
+.chip.active {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: var(--accent-emerald);
+  color: #a7f3d0;
+}
+
+.chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.speed-select {
+  min-width: 78px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+@media (hover: hover) {
+  .speed-select:hover {
+    background: var(--control-bg-hover);
+    border-color: var(--border-hover);
+  }
+}
+
+/* Search & Inputs */
+.input-text {
+  width: 100%;
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: #fff;
+  font-size: 12px;
+  outline: none;
+}
+
+.input-text:focus {
+  border-color: var(--accent-cyan);
+}
+
+/* One keyboard focus ring for every clickable control */
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.chip:focus-visible,
+.fab:focus-visible,
+.status-chip:focus-visible,
+.speed-select:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- left sidebar */
+
+.left-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.panel-section {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #bae6fd;
+}
+
+.coord-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+  display: block;
+}
+
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 /* Search card (map-style) */
 .search-card {
   position: relative;
-  z-index: 6;
+  z-index: var(--z-search);
   flex-shrink: 0;
   padding: 6px 10px;
+}
+
+.search-card:focus-within {
+  border-color: var(--border-bright);
 }
 
 .search-input-row {
@@ -543,11 +531,7 @@
 }
 
 .search-input::placeholder {
-  color: #64748b;
-}
-
-.search-card:focus-within {
-  border-color: var(--border-bright);
+  color: var(--text-faint);
 }
 
 .search-results {
@@ -555,35 +539,199 @@
   top: calc(100% + 6px);
   left: 0;
   right: 0;
+  max-height: min(320px, 55vh);
   max-height: min(320px, 55dvh);
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 6px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   background: var(--bg-glass-strong);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
 }
 
-.icon-btn {
-  display: inline-flex;
+/* Shell filter list */
+.shell-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.shell-row {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 0;
-  color: var(--text-dim);
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   cursor: pointer;
-  padding: 4px;
+  font-size: 11px;
+  transition: opacity 0.12s;
+}
+
+.shell-row.disabled {
+  opacity: 0.42;
+}
+
+.shell-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-dot {
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
 }
 
-.icon-btn:hover {
-  background: rgba(148, 163, 184, 0.2);
-  color: var(--text-main);
+.shell-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
 }
+
+/* Satellite mini list (also the search results) */
+.sat-list {
+  max-height: 135px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sat-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .sat-list-item:hover {
+    border-color: var(--border-hover);
+    background: rgba(30, 41, 59, 0.85);
+  }
+}
+
+.sat-list-item.selected {
+  border-color: var(--accent-gold);
+  background: rgba(250, 204, 21, 0.14);
+}
+
+/* Sky plot (az/el chart of satellites above the ground station) */
+.sky-plot {
+  display: block;
+  margin: 8px auto 4px;
+  cursor: crosshair;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+/* ---------------------------------------------------------------- right column */
+
+.right-inspector {
+  /* the selected satellite stays on top; the (tall, dev-oriented) Perf panel stacks below it */
+  order: -1;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.telemetry-box {
+  min-width: 0;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+}
+
+.telemetry-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- time bar */
+
+.bottom-timebar {
+  position: relative;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.time-readout {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.speed-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.timeline-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.datetime-input {
+  width: 175px;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 4px 7px;
+}
+
+.timeline-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent-cyan);
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- camera buttons */
 
 /* Map-style floating controls (bottom-right of the viewport) */
 .map-controls {
@@ -598,8 +746,8 @@
 }
 
 .fab {
-  width: 40px;
-  height: 40px;
+  width: var(--fab-size);
+  height: var(--fab-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -608,20 +756,25 @@
   border-radius: 50%;
   color: var(--text-main);
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-fab);
   pointer-events: auto;
-  transition: all 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
-.fab:hover:not(:disabled) {
-  border-color: var(--border-bright);
-  color: #7dd3fc;
+@media (hover: hover) {
+  .fab:hover:where(:not(:disabled)) {
+    border-color: var(--border-bright);
+    color: var(--accent-cyan-soft);
+  }
 }
 
 .fab.on {
   background: rgba(14, 165, 233, 0.3);
   border-color: var(--accent-cyan);
-  color: #7dd3fc;
+  color: var(--accent-cyan-soft);
 }
 
 .fab:disabled {
@@ -633,8 +786,8 @@
 .fab-group {
   display: flex;
   flex-direction: column;
-  border-radius: 20px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  border-radius: calc(var(--fab-size) / 2);
+  box-shadow: var(--shadow-fab);
 }
 
 .fab-group .fab {
@@ -642,211 +795,22 @@
 }
 
 .fab-group .fab:first-child {
-  border-radius: 20px 20px 0 0;
+  border-radius: calc(var(--fab-size) / 2) calc(var(--fab-size) / 2) 0 0;
   border-bottom-color: transparent;
 }
 
 .fab-group .fab:last-child {
-  border-radius: 0 0 20px 20px;
+  border-radius: 0 0 calc(var(--fab-size) / 2) calc(var(--fab-size) / 2);
 }
 
-/* Sky plot (az/el chart of satellites above the ground station) */
-.sky-plot {
-  display: block;
-  margin: 8px auto 4px;
-  cursor: crosshair;
-  border-radius: 8px;
-  background: rgba(2, 6, 23, 0.55);
-}
+/* ---------------------------------------------------------------- satellite sheet (phones) */
 
-/* Narrow screens: panels become a bottom sheet toggled from the header */
-.only-narrow {
-  display: none;
-}
-
-@media (max-width: 900px) {
-  .only-narrow {
-    display: inline-flex;
-  }
-
-  .hud-root {
-    inset: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right))
-      calc(8px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
-    gap: 8px;
-  }
-
-  /* iOS zooms the page when focusing a field whose font is under 16px */
-  input,
-  select,
-  textarea,
-  .search-input {
-    font-size: 16px;
-  }
-
-  .top-bar {
-    padding: 8px 10px;
-  }
-
-  .metrics-row,
-  .badge-wasm {
-    display: none;
-  }
-
-  .hud-middle {
-    flex-direction: column;
-    justify-content: flex-end;
-    align-items: stretch;
-  }
-
-  /* Panels share the space between header and time bar: they may shrink (flex-shrink) and
-     scroll inside, instead of overflowing the screen when several are open. */
-  .hud-middle {
-    overflow: hidden;
-    /* gutter for the round camera buttons (they stay in the padding box's right edge), so panels
-       never slide underneath them */
-    padding-right: 52px;
-  }
-
-  .left-sidebar {
-    display: none;
-    width: 100%;
-    max-height: 70%;
-    flex: 0 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-    align-self: auto !important;
-  }
-
-  .left-sidebar.sheet-open {
-    display: flex;
-  }
-
-  .right-column {
-    order: -1;
-    width: 100%;
-    max-height: 100%;
-    flex: 0 1 auto;
-    min-height: 0;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .map-controls {
-    top: 0;
-    bottom: auto;
-  }
-
-  /* Anchor the Display menu to the header (full width) instead of to its button: the button sits
-     near the left edge on a phone, so a button-anchored 250px menu ran off-screen. */
-  .menu-anchor {
-    position: static;
-  }
-
-  .menu-popover {
-    left: 10px;
-    right: 10px;
-    width: auto;
-    max-height: calc(100dvh - 140px);
-    overflow-y: auto;
-  }
-
-  /* One-row time controls: drop the +/-24 h captions, let the date field shrink */
-  .slider-label {
-    display: none;
-  }
-
-  .timeline-slider {
-    min-width: 60px;
-  }
-
-  .datetime-input {
-    flex: 0 1 190px;
-    width: auto;
-    min-width: 0;
-  }
-
-  .time-readout {
-    order: -1;
-    width: 100%;
-    text-align: center;
-    flex-direction: column;
-    gap: 2px;
-    white-space: nowrap;
-    padding: 0 44px; /* symmetric, clear of the collapse chevron */
-  }
-}
-
-.speed-select {
-  min-width: 78px;
-  background: rgba(30, 41, 59, 0.75);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  color: var(--text-main);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: monospace;
-  padding: 5px 8px;
-  border-radius: 6px;
-  text-align: center;
-}
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Avoid double-tap-to-zoom delays on controls (all platforms) */
-button,
-select,
-label,
-.fab {
-  touch-action: manipulation;
-}
-
-.chip {
-  white-space: nowrap;
-}
-
-/* GPU bench toggles (set on <html> by util/gpuBench.ts) */
-.bench-no-blur .hud-panel {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-.bench-hud-hidden .hud-root {
-  visibility: hidden;
-}
-
-/* Phone layout pieces that are inert on wide screens */
-.status-chip {
-  display: none;
-}
-
-.top-bar--hidden {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.timebar-toggle {
-  display: none;
-}
-
-.clock-compact {
-  display: none;
-}
-
-.bottom-timebar {
-  position: relative;
-}
-
-/* Satellite details: bottom sheet (phones) */
 .sat-sheet {
   position: absolute;
   left: 0;
   right: 0;
   bottom: calc(var(--timebar-h, 150px) + 8px);
-  z-index: 25; /* above the header, so the expanded sheet can cover it */
+  z-index: var(--z-sheet); /* above the header, so the expanded sheet can cover it */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -885,7 +849,7 @@ label,
 .sheet-name {
   font-size: 14px;
   font-weight: 700;
-  color: #fde047;
+  color: var(--accent-gold);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -893,8 +857,8 @@ label,
 
 .sheet-figures {
   font-size: 12px;
-  color: #cbd5e1;
-  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  color: var(--text-soft);
+  font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -916,9 +880,149 @@ label,
   visibility: hidden;
 }
 
+/* ---------------------------------------------------------------- modal */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  padding: calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right))
+    calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+}
+
+.modal-card {
+  width: 540px;
+  max-width: 100%;
+  max-height: 100%; /* of the backdrop's padded box: always fits the visible viewport */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tle-textarea {
+  width: 100%;
+  height: 180px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px;
+  resize: vertical;
+  outline: none;
+}
+
+.tle-textarea:focus {
+  border-color: var(--accent-cyan);
+}
+
+/* ---------------------------------------------------------------- bench / perf */
+
+/* GPU bench toggles (set on <html> by util/gpuBench.ts) */
+.bench-no-blur .hud-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.bench-hud-hidden .hud-root {
+  visibility: hidden;
+}
+
+/* Perf panel diagnostics / bench dialogs: no backdrop blur (a large blur surface over the live WebGL canvas) */
+.perf-flat {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(7, 11, 22, 0.92);
+}
+
+/* Perf panel: no nested boxes inside it (children keep their layout but draw no backgrounds,
+   borders, radii or shadows) so the panel is one glass surface instead of stacked translucent layers */
+.perf-lite * {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* ---------------------------------------------------------------- responsive visibility */
+
+/* Narrow screens: panels become a bottom sheet toggled from the header.
+   (Must come after .btn / .icon-btn so it beats their display.) */
+.only-narrow {
+  display: none;
+}
+
+.clock-compact {
+  display: none;
+}
+
+/* Wide screens: the left column can be collapsed from the header */
+.left-sidebar.collapsed {
+  display: none;
+}
+
+/* Wide but short (laptops with a small window, landscape phones/tablets above the breakpoint):
+   reserving the full button-stack height would leave the right column almost no room, so the
+   column keeps clear of the buttons horizontally instead. */
+@media (min-width: 901px) and (max-height: 760px) {
+  .right-column {
+    max-height: 100%;
+    margin-right: var(--fab-gutter);
+  }
+}
+
+@media (min-width: 901px) and (max-height: 520px) {
+  /* the full button stack no longer fits; zoom stays on wheel / pinch */
+  .fab-group {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- narrow (<= 900px) */
+
 @media (max-width: 900px) {
+  .only-narrow {
+    display: inline-flex;
+  }
+
+  .only-wide {
+    /* the collapse toggle is a wide-screen feature; the bottom sheet has its own */
+    display: none;
+  }
+
+  /* the wide-screen collapse state must not hide the bottom sheet */
+  .left-sidebar.collapsed.sheet-open {
+    display: flex;
+  }
+
+  .hud-root {
+    inset: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right))
+      calc(8px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
+    gap: 8px;
+  }
+
+  /* iOS zooms the page when focusing a field whose font is under 16px */
+  input,
+  select,
+  textarea,
+  .search-input {
+    font-size: 16px;
+  }
+
   /* One-row header: [menu] [ground-station status ........] [display] [perf] [tle] */
-  .brand-block {
+  .brand-block,
+  .metrics-row {
     display: none;
   }
 
@@ -939,20 +1043,16 @@ label,
     padding: 9px 11px;
   }
 
-  .btn-label {
-    display: none;
-  }
-
   .status-chip {
     display: inline-flex;
     align-items: center;
     flex: 1;
     min-width: 0;
     padding: 8px 12px;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     border: 1px solid rgba(16, 185, 129, 0.45);
     background: rgba(16, 185, 129, 0.12);
-    color: #6ee7b7;
+    color: var(--accent-emerald-soft);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -964,9 +1064,91 @@ label,
     white-space: nowrap;
   }
 
-  /* panels above the sheet keep clear of it */
+  /* Anchor the Display menu to the header (full width) instead of to its button: the button sits
+     near the left edge on a phone, so a button-anchored 250px menu ran off-screen. */
+  .menu-anchor {
+    position: static;
+  }
+
+  .menu-popover {
+    left: 10px;
+    right: 10px;
+    width: auto;
+  }
+
+  /* Panels share the space between header and time bar: they may shrink (flex-shrink) and
+     scroll inside, instead of overflowing the screen when several are open. */
   .hud-middle {
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
+    overflow: hidden;
+    /* gutter for the round camera buttons (they stay in the padding box's right edge), so panels
+       never slide underneath them */
+    padding-right: var(--fab-gutter);
+    /* panels above the satellite sheet keep clear of it */
     padding-bottom: var(--sheet-h, 0px);
+  }
+
+  .left-sidebar {
+    display: none;
+    width: 100%;
+    max-height: 70%;
+    flex: 0 1 auto;
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .hud-middle > .left-sidebar {
+    align-self: auto;
+  }
+
+  .left-sidebar.sheet-open {
+    display: flex;
+  }
+
+  .right-column {
+    order: -1;
+    width: 100%;
+    max-height: 100%;
+    flex: 0 1 auto;
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .map-controls {
+    top: 0;
+    bottom: auto;
+  }
+
+  /* With the sheet expanded there is no room for the zoom pair; pinch-zoom is available on touch */
+  .hud-sheet-expanded .fab-group {
+    display: none;
+  }
+
+  /* One-row time controls: drop the +/-24 h captions, let the date field shrink */
+  .slider-label {
+    display: none;
+  }
+
+  .timeline-slider {
+    min-width: 60px;
+  }
+
+  .datetime-input {
+    flex: 0 1 190px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .time-readout {
+    order: -1;
+    width: 100%;
+    text-align: center;
+    flex-direction: column;
+    gap: 2px;
+    white-space: nowrap;
+    padding: 0 44px; /* symmetric, clear of the collapse chevron */
   }
 
   /* collapsible time controls */
@@ -976,14 +1158,6 @@ label,
     top: 4px;
     right: 6px;
     z-index: 2;
-  }
-
-  /* icon-only play / LIVE buttons: 40px touch targets */
-  .tb-btn {
-    min-width: 40px;
-    min-height: 40px;
-    justify-content: center;
-    padding: 0 8px;
   }
 
   .bottom-timebar--collapsed .timeline-slider-row,
@@ -1013,6 +1187,7 @@ label,
     gap: 6px;
   }
 
+  /* !important: the button group carries an inline gap */
   .bottom-timebar--collapsed .timebar-top > div:first-child {
     gap: 6px !important;
     flex: 0 0 auto;
@@ -1044,27 +1219,4 @@ label,
     height: 40px;
     padding: 0 4px;
   }
-}
-
-@media (max-width: 900px) {
-  /* With the sheet expanded there is no room for the zoom pair; pinch-zoom is available on touch */
-  .hud-sheet-expanded .fab-group {
-    display: none;
-  }
-}
-
-/* Perf panel diagnostics / bench dialogs: no backdrop blur (a large blur surface over the live WebGL canvas) */
-.perf-flat,
-.perf-flat.hud-panel {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  background: rgba(7, 11, 22, 0.92);
-}
-
-/* Perf panel: no nested boxes inside it (children keep their layout but draw no backgrounds,
-   borders, radii or shadows) so the panel is one glass surface instead of stacked translucent layers */
-.perf-lite * {
-  background: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
 }

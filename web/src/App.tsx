@@ -29,16 +29,22 @@ import {
 } from './components/PerfMonitorPanel';
 import {
   Activity,
+  Anchor,
   ChevronsDown,
   ChevronsUp,
   Crosshair,
   Database,
   House,
   Layers,
+  Link2,
+  MapPin,
+  RefreshCw,
   Rotate3d,
   LocateFixed,
   Menu,
   Minus,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pause,
   Play,
   Plus,
@@ -237,8 +243,7 @@ function OverheadSatellitesPanel({
   return (
     <div>
       <span className="field-label">
-        Overhead Satellites (
-        <span ref={countSpanRef}>{engine.visibleCount}</span> in Dish FOV):
+        上空の衛星 (<span ref={countSpanRef}>{engine.visibleCount}</span>)
       </span>
       <div className="sat-list">
         {items.map((s) => (
@@ -255,7 +260,7 @@ function OverheadSatellitesPanel({
         ))}
         {items.length === 0 && (
           <div style={{ fontSize: '11px', color: '#64748b' }}>
-            No satellites above {observer.minElDeg}° elevation.
+            仰角 {observer.minElDeg}° 以上の衛星はありません。
           </div>
         )}
       </div>
@@ -265,9 +270,7 @@ function OverheadSatellitesPanel({
 
 export function App() {
   const [engine, setEngine] = useState<StarlinkSimEngine | null>(null);
-  const [loadingMsg, setLoadingMsg] = useState(
-    'Initializing MoonBit SGP4 Wasm & Loading Local 10,652 Starlink TLEs...',
-  );
+  const [loadingMsg, setLoadingMsg] = useState('読み込み中…');
   const [satVersion, setSatVersion] = useState(0);
   const pointsRef = useRef<THREE.Points | null>(null);
   const viewCommandsRef = useRef<ViewCommands | null>(null);
@@ -283,8 +286,6 @@ export function App() {
 
   // Direct DOM refs for high-frequency HUD readouts
   const topInRangeRef = useRef<HTMLSpanElement>(null);
-  const topFpsRef = useRef<HTMLSpanElement>(null);
-  const topSgp4MsRef = useRef<HTMLSpanElement>(null);
   const utcClockRef = useRef<HTMLSpanElement>(null);
   const jstClockRef = useRef<HTMLSpanElement>(null);
   const jstCompactClockRef = useRef<HTMLSpanElement>(null);
@@ -347,6 +348,7 @@ export function App() {
   /** How far (px) the 3D view is shifted up so the globe is centred in the area the sheet leaves free. */
   const viewShiftRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(false); // bottom sheet on narrow screens
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false); // hidden left column on wide screens
   useEffect(() => {
     if (!showDisplayMenu) return;
     const close = (e: PointerEvent) => {
@@ -616,19 +618,13 @@ export function App() {
     syncClockDom(simTimeMs);
     if (topInRangeRef.current) {
       topInRangeRef.current.textContent = observer.enabled
-        ? `${visCount} sats`
+        ? `${visCount} 機`
         : 'OFF';
     }
     if (topInRangeChipRef.current) {
       topInRangeChipRef.current.textContent = observer.enabled
         ? `${stationShortName(observer.name)} · 視界内 ${visCount}機`
         : '地上局 OFF';
-    }
-    if (topFpsRef.current) {
-      topFpsRef.current.textContent = `${perf.fps.toFixed(0)} FPS`;
-    }
-    if (topSgp4MsRef.current) {
-      topSgp4MsRef.current.textContent = `${perf.wasmPureSgp4Ms.toFixed(2)} ms`;
     }
     const listeners = perfListenersRef.current;
     for (let i = 0; i < listeners.length; i++) {
@@ -773,12 +769,10 @@ export function App() {
         const age = s.ageSec == null ? '' : ` (${(s.ageSec / 3600).toFixed(1)} 時間前)`;
         const parts = [
           s.exists
-            ? `TLEの最新エポック: ${new Date(s.newestEpoch).toLocaleString()}${age}`
+            ? `最新エポック: ${new Date(s.newestEpoch).toLocaleString()}${age}`
             : 'サーバーにTLEがまだありません',
           s.refreshing ? '更新中…' : s.stale ? '古いため更新待ち' : '最新',
         ];
-        if (s.exists) parts.push(`サーバー取得: ${new Date(s.updatedAt).toLocaleString()}`);
-        if (s.cooldownRemainingSec > 0) parts.push(`次の取得まで ${Math.ceil(s.cooldownRemainingSec / 60)} 分`);
         if (s.lastError) parts.push(`直近のエラー: ${s.lastError}`);
         setTleServerStatus(parts.join(' / '));
       })
@@ -804,7 +798,7 @@ export function App() {
         }}
       >
         <div style={{ fontSize: '18px', fontWeight: 700, letterSpacing: '0.08em' }}>
-          STARLINK SGP4 ORBITAL SIMULATOR
+          STARLINK SIMULATOR
         </div>
         <div style={{ fontSize: '13px', color: '#94a3b8' }}>{loadingMsg}</div>
       </div>
@@ -861,39 +855,35 @@ export function App() {
       >
         <div className="brand-block">
           <div className="brand-title">
-            <span>🛰️ STARLINK SGP4 SIMULATOR</span>
-            <span className="badge-wasm">MoonBit Wasm + Preact R3F</span>
+            <span>STARLINK SIMULATOR</span>
           </div>
         </div>
 
         <div className="metrics-row">
           <div className="metric-item">
-            <span className="metric-label">Tracked Satellites</span>
+            <span className="metric-label">衛星数</span>
             <span className="metric-value cyan">
               {engine.count.toLocaleString()}
             </span>
           </div>
           <div className="metric-item">
-            <span className="metric-label">In Range ({observer.name.split(' ')[0]})</span>
+            <span className="metric-label">視界内 ({stationShortName(observer.name)})</span>
             <span ref={topInRangeRef} className="metric-value emerald">
-              {observer.enabled ? `${engine.visibleCount} sats` : 'OFF'}
-            </span>
-          </div>
-          <div className="metric-item">
-            <span className="metric-label">FPS / Frame</span>
-            <span ref={topFpsRef} className="metric-value emerald">
-              60 FPS
-            </span>
-          </div>
-          <div className="metric-item">
-            <span className="metric-label">MoonBit SGP4 Pure</span>
-            <span ref={topSgp4MsRef} className="metric-value cyan">
-              3.90 ms
+              {observer.enabled ? `${engine.visibleCount} 機` : 'OFF'}
             </span>
           </div>
         </div>
 
         <div className="top-actions">
+          <button
+            className={`btn only-wide ${sidebarCollapsed ? '' : 'active'}`}
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            aria-expanded={!sidebarCollapsed}
+            aria-label="左パネルの表示切替"
+            title={sidebarCollapsed ? '左パネルを開く' : '左パネルを閉じる'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
           <button
             className={`btn only-narrow ${sidebarOpen ? 'active' : ''}`}
             onClick={() => setSidebarOpen((v) => !v)}
@@ -923,17 +913,15 @@ export function App() {
               title="表示設定"
             >
               <Layers size={18} />
-              <span className="btn-label">Display ▾</span>
             </button>
             {showDisplayMenu && (
               <div className="hud-panel menu-popover">
-                <span className="field-label">表示モード</span>
                 <div className="segmented">
                   {(
                     [
-                      ['photoreal', '4K Photoreal'],
-                      ['hybrid', 'Hybrid Vector'],
-                      ['tactical', 'Tactical Grid'],
+                      ['photoreal', '写実'],
+                      ['hybrid', 'ハイブリッド'],
+                      ['tactical', 'グリッド'],
                     ] as const
                   ).map(([mode, label]) => (
                     <button
@@ -956,7 +944,7 @@ export function App() {
                       }))
                     }
                   />
-                  雲 (Clouds)
+                  雲
                 </label>
                 <label className="menu-check">
                   <input
@@ -964,7 +952,7 @@ export function App() {
                     checked={showTrails}
                     onChange={() => setShowTrails((v) => !v)}
                   />
-                  衛星の航跡 (Trails)
+                  衛星の航跡
                 </label>
                 <label className="menu-check">
                   <input
@@ -977,7 +965,7 @@ export function App() {
                       }))
                     }
                   />
-                  昼夜の陰影 (Day/Night)
+                  昼夜の陰影
                 </label>
                 <label className="menu-check">
                   <input
@@ -990,11 +978,11 @@ export function App() {
                       }))
                     }
                   />
-                  光学演出 (Lens flare)
+                  レンズフレア
                 </label>
                 <label className="menu-check">
                   <input type="checkbox" checked={postFx} onChange={() => setPostFx((v) => !v)} />
-                  周辺の色収差・ぼかし (Lens FX)
+                  周辺の色収差・ぼかし
                 </label>
               </div>
             )}
@@ -1006,7 +994,6 @@ export function App() {
             title="Perf Stats"
           >
             <Activity size={18} />
-            <span className="btn-label">Perf Stats</span>
           </button>
           <button
             className="btn"
@@ -1015,14 +1002,15 @@ export function App() {
             title="TLE Data"
           >
             <Database size={18} />
-            <span className="btn-label">TLE Data</span>
           </button>
         </div>
       </header>
 
       <div className="hud-middle">
       {/* LEFT SIDEBAR: GROUND STATION, SHELL FILTERS & SEARCH */}
-      <aside className={`left-sidebar ${sidebarOpen ? 'sheet-open' : ''}`}>
+      <aside
+        className={`left-sidebar ${sidebarOpen ? 'sheet-open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}
+      >
         {/* Search (top of sidebar, map-style: results overlay below the input) */}
         <section className="hud-panel search-card">
           <div className="search-input-row">
@@ -1073,7 +1061,7 @@ export function App() {
         {/* Ground Station Section */}
         <section className="hud-panel panel-section">
           <div className="section-header">
-            <span>📡 Ground Station (地上局・上空通過)</span>
+            <span>地上局</span>
             <input
               type="checkbox"
               checked={observer.enabled}
@@ -1109,7 +1097,7 @@ export function App() {
 
           <div className="coord-grid">
             <div>
-              <label className="field-label">Latitude (°N)</label>
+              <label className="field-label">緯度 (°N)</label>
               <input
                 type="number"
                 step="0.1"
@@ -1125,7 +1113,7 @@ export function App() {
               />
             </div>
             <div>
-              <label className="field-label">Longitude (°E)</label>
+              <label className="field-label">経度 (°E)</label>
               <input
                 type="number"
                 step="0.1"
@@ -1148,16 +1136,17 @@ export function App() {
               style={{ flex: 1, justifyContent: 'center' }}
               onClick={() => setPickGroundStationMode((p) => !p)}
             >
-              {pickGroundStationMode
-                ? '🎯 Click anywhere on Earth...'
-                : '📍 Pick on Globe (or Double-Click)'}
+              <MapPin size={14} />
+              {pickGroundStationMode ? '地球上をクリック' : '地球上で指定'}
             </button>
             <button
               className={`btn ${showCommLinks ? 'active-emerald' : ''}`}
               onClick={() => setShowCommLinks((s) => !s)}
-              title="Toggle Laser/RF Link Beams"
+              aria-label="通信リンクの表示"
+              aria-pressed={showCommLinks}
+              title="通信リンクの表示"
             >
-              🔗 Links
+              <Link2 size={14} />
             </button>
           </div>
 
@@ -1170,7 +1159,7 @@ export function App() {
                 color: '#94a3b8',
               }}
             >
-              <span>Min Elevation Angle (最低仰角)</span>
+              <span>最低仰角</span>
               <span style={{ color: '#34d399', fontWeight: 700 }}>
                 {observer.minElDeg}°
               </span>
@@ -1217,7 +1206,7 @@ export function App() {
         {/* Orbital Shell Filter Section */}
         <section className="hud-panel panel-section">
           <div className="section-header">
-            <span>🌐 Orbital Shells (軌道シェル別表示)</span>
+            <span>軌道シェル</span>
           </div>
           <div className="shell-list">
             {[0, 1, 2, 3, 4].map((shellId) => {
@@ -1372,8 +1361,7 @@ export function App() {
               title={isPlaying ? '一時停止' : '再生'}
               onClick={() => setIsPlaying((p) => !p)}
             >
-              {isPlaying ? <Pause size={18} className="only-narrow" /> : <Play size={18} className="only-narrow" />}
-              <span className="btn-label">{isPlaying ? '⏸ Pause' : '▶ Play'}</span>
+              {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
             <button
               className="btn active-emerald tb-btn"
@@ -1385,15 +1373,15 @@ export function App() {
                 handleJumpToTime(Date.now());
               }}
             >
-              <Radio size={18} className="only-narrow" />
-              <span className="btn-label">🔴 LIVE (現在時刻)</span>
+              <Radio size={18} />
             </button>
             <button
-              className="btn btn-epoch"
-              onClick={() => handleJumpToTime(engine.defaultEpochUnixMs)}
+              className="btn tb-btn btn-epoch"
+              aria-label="TLE のスナップショット時刻にジャンプ"
               title="Jump to TLE Snapshot Epoch"
+              onClick={() => handleJumpToTime(engine.defaultEpochUnixMs)}
             >
-              ⚓ TLE Epoch
+              <Anchor size={18} />
             </button>
           </div>
 
@@ -1455,7 +1443,7 @@ export function App() {
             className="slider-label"
             style={{ fontSize: '11px', color: '#94a3b8', minWidth: '58px' }}
           >
-            -24 Hours
+            -24 h
           </span>
           <input
             ref={sliderInputRef}
@@ -1483,7 +1471,7 @@ export function App() {
               textAlign: 'right',
             }}
           >
-            +24 Hours
+            +24 h
           </span>
 
           <input
@@ -1533,17 +1521,14 @@ export function App() {
             className="hud-panel modal-card"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="section-header" style={{ fontSize: '13px' }}>
-              <span>📥 TLE Orbital Dataset Manager</span>
-              <button className="btn" onClick={() => setShowTleModal(false)}>
-                ✕
+            <div className="section-header" style={{ justifyContent: 'flex-end' }}>
+              <button className="icon-btn" aria-label="閉じる" onClick={() => setShowTleModal(false)}>
+                <X size={16} />
               </button>
             </div>
             <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.5 }}>
-              <strong>{engine.count.toLocaleString()} 機</strong>{' '}
-              のStarlink軌道データを読み込み済みです。TLEはサーバーが CelesTrak から自動で取得・更新し
-              (ファイルのタイムスタンプで判断し、複数のクライアントで共有)、このアプリはサーバーのデータを読むだけです。
-              過去・未来の任意の時刻をSGP4計算できます。
+              <strong>{engine.count.toLocaleString()} 機</strong> の軌道データを読み込み済みです。
+              データはサーバーが CelesTrak から自動で更新します。
             </p>
             {tleServerStatus && (
               <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.5 }}>
@@ -1555,12 +1540,13 @@ export function App() {
                 className="btn active-emerald"
                 onClick={() => void syncTleFromServer(true)}
               >
-                🔄 サーバーの最新データを再読み込み
+                <RefreshCw size={14} />
+                再読み込み
               </button>
             </div>
             <div>
               <label className="field-label">
-                またはカスタムTLEデータ（2行/3行フォーマット）を貼り付けて反映:
+                独自のTLEを貼り付け (2行/3行形式):
               </label>
               <textarea
                 className="tle-textarea"
@@ -1580,7 +1566,7 @@ export function App() {
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button className="btn active" onClick={handleApplyCustomTle}>
-                反映する (Load TLE)
+                反映
               </button>
             </div>
           </div>

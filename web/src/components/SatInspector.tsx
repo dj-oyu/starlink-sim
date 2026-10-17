@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { ChevronDown, ChevronUp, X } from 'lucide-preact';
+import { ChevronDown, ChevronUp, LocateFixed, Route, X } from 'lucide-preact';
 import type { SatelliteTelemetry } from '../wasm/simEngine';
 
 export type SheetState = 'peek' | 'half' | 'full';
@@ -44,32 +44,32 @@ export function SatInspectorBody({
 
       <div className="telemetry-grid">
         <div className="telemetry-box">
-          <span className="field-label">ALTITUDE (高度)</span>
+          <span className="field-label">高度</span>
           <div className="telemetry-val">{t.altKm.toFixed(2)} km</div>
         </div>
         <div className="telemetry-box">
-          <span className="field-label">VELOCITY (速度)</span>
+          <span className="field-label">速度</span>
           <div className="telemetry-val">{t.speedKms.toFixed(3)} km/s</div>
         </div>
         <div className="telemetry-box">
-          <span className="field-label">LATITUDE (緯度)</span>
+          <span className="field-label">緯度</span>
           <div className="telemetry-val">{t.latDeg.toFixed(4)}°</div>
         </div>
         <div className="telemetry-box">
-          <span className="field-label">LONGITUDE (経度)</span>
+          <span className="field-label">経度</span>
           <div className="telemetry-val">{t.lonDeg.toFixed(4)}°</div>
         </div>
         <div className="telemetry-box">
-          <span className="field-label">ELEVATION (仰角)</span>
+          <span className="field-label">仰角</span>
           <div
             className="telemetry-val"
             style={{ color: t.visible ? '#34d399' : '#94a3b8' }}
           >
-            {t.visible ? `${t.elevationDeg.toFixed(1)}° (VISIBLE)` : 'Below FOV'}
+            {t.visible ? `${t.elevationDeg.toFixed(1)}°` : '圏外'}
           </div>
         </div>
         <div className="telemetry-box">
-          <span className="field-label">SLANT RANGE (距離)</span>
+          <span className="field-label">距離</span>
           <div className="telemetry-val">
             {t.visible ? `${t.rangeKm.toFixed(0)} km` : '---'}
           </div>
@@ -79,19 +79,19 @@ export function SatInspectorBody({
       {extended && (
         <div className="telemetry-grid">
           <div className="telemetry-box">
-            <span className="field-label">INCLINATION (軌道傾斜角)</span>
+            <span className="field-label">軌道傾斜角</span>
             <div className="telemetry-val">{t.inclinationDeg.toFixed(2)}°</div>
           </div>
           <div className="telemetry-box">
-            <span className="field-label">AZIMUTH (方位角)</span>
+            <span className="field-label">方位角</span>
             <div className="telemetry-val">{t.azimuthDeg.toFixed(1)}°</div>
           </div>
           <div className="telemetry-box">
-            <span className="field-label">PERIOD (周期)</span>
-            <div className="telemetry-val">{periodMin.toFixed(1)} min</div>
+            <span className="field-label">周期</span>
+            <div className="telemetry-val">{periodMin.toFixed(1)} 分</div>
           </div>
           <div className="telemetry-box">
-            <span className="field-label">REVS / DAY (周回数)</span>
+            <span className="field-label">周回数 / 日</span>
             <div className="telemetry-val">{(1440 / periodMin).toFixed(2)}</div>
           </div>
         </div>
@@ -103,14 +103,16 @@ export function SatInspectorBody({
           style={{ flex: 1, justifyContent: 'center' }}
           onClick={onToggleFollow}
         >
-          {followSelected ? '🎥 Tracking Satellite' : '🎥 Follow Camera'}
+          <LocateFixed size={14} />
+          追従
         </button>
         <button
           className={`btn ${showGroundTrack ? 'active' : ''}`}
           style={{ flex: 1, justifyContent: 'center' }}
           onClick={onToggleGroundTrack}
         >
-          〰️ Ground Track
+          <Route size={14} />
+          地上軌跡
         </button>
       </div>
     </>
@@ -129,14 +131,14 @@ export function SatInspectorTitle({
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       <div>
         <div style={{ fontSize: '14px', fontWeight: 700, color: '#fde047' }}>
-          🛰️ {t.name}
+          {t.name}
         </div>
         <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-          NORAD #{t.satnum} · COSPAR {t.intlDesig || 'N/A'}
+          NORAD #{t.satnum} · COSPAR {t.intlDesig || '—'}
         </div>
       </div>
-      <button className="btn" onClick={onClose} aria-label="閉じる">
-        ✕
+      <button className="icon-btn" onClick={onClose} aria-label="閉じる">
+        <X size={16} />
       </button>
     </div>
   );
@@ -222,7 +224,7 @@ export function SatSheet({ state, heightPx, onStateChange, onClose, sheetRef, ..
 
       <div className="sheet-head">
         <div className="sheet-title">
-          <div className="sheet-name">🛰️ {t.name}</div>
+          <div className="sheet-name">{t.name}</div>
           <div className="sheet-figures">
             高度 {t.altKm.toFixed(0)} km · {t.speedKms.toFixed(2)} km/s
             {t.visible ? ` · 仰角 ${t.elevationDeg.toFixed(0)}°` : ''}
@@ -242,7 +244,7 @@ export function SatSheet({ state, heightPx, onStateChange, onClose, sheetRef, ..
 
       <div className="sheet-body">
         <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-          NORAD #{t.satnum} · COSPAR {t.intlDesig || 'N/A'}
+          NORAD #{t.satnum} · COSPAR {t.intlDesig || '—'}
         </div>
         <SatInspectorBody {...body} extended={state === 'full'} />
       </div>

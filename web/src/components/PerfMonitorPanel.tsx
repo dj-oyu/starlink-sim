@@ -262,8 +262,7 @@ export function PerfMonitorPanel({
         gap: '10px',
       }}
     >
-      <div className="section-header">
-        <span>📊 Render & Wasm SGP4 Profiler</span>
+      <div className="section-header" style={{ justifyContent: 'flex-end' }}>
         <div style={{ display: 'flex', gap: '5px' }}>
           {onRunGpuBench && (
             <button className="chip" onClick={handleGpuBench} disabled={benchMsg !== null}>
