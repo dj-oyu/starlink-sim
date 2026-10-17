@@ -1,4 +1,5 @@
-import { useRef } from 'preact/hooks';
+import { ComponentChildren } from 'preact';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { ChevronDown, ChevronUp, X } from 'lucide-preact';
 import type { SatelliteTelemetry } from '../wasm/simEngine';
 
@@ -247,4 +248,24 @@ export function SatSheet({ state, heightPx, onStateChange, onClose, sheetRef, ..
       </div>
     </section>
   );
+}
+
+/**
+ * Re-renders only its subtree when new telemetry arrives (4 Hz), so the rest of the app does not
+ * have to render for it. `initial` is the sample the parent last rendered with.
+ */
+export function LiveTelemetry({
+  initial,
+  subscribe,
+  children,
+}: {
+  initial: SatelliteTelemetry;
+  subscribe: (cb: (t: SatelliteTelemetry) => void) => () => void;
+  children: (t: SatelliteTelemetry) => ComponentChildren;
+}) {
+  const [t, setT] = useState(initial);
+  // a new selection arrives through `initial`
+  useEffect(() => setT(initial), [initial]);
+  useEffect(() => subscribe(setT), [subscribe]);
+  return <>{children(t)}</>;
 }

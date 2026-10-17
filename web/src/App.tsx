@@ -6,6 +6,7 @@ import { useMediaQuery } from './util/useMediaQuery';
 import {
   SatInspectorBody,
   SatInspectorTitle,
+  LiveTelemetry,
   SatSheet,
   SheetState,
 } from './components/SatInspector';
@@ -367,8 +368,23 @@ export function App() {
     [],
   );
 
+  // The telemetry numbers change 4x a second; re-rendering the whole App for that showed up as
+  // periodic hitches on phones. App only keeps the first sample of a selection (enough to decide
+  // what to show); the live values go straight to <LiveTelemetry> through a subscription.
   const [selectedTelemetry, setSelectedTelemetry] =
     useState<SatelliteTelemetry | null>(null);
+  const telemetryRef = useRef<SatelliteTelemetry | null>(null);
+  const telemetryListenersRef = useRef<((t: SatelliteTelemetry) => void)[]>([]);
+  const subscribeTelemetry = useMemo(
+    () => (cb: (t: SatelliteTelemetry) => void) => {
+      telemetryListenersRef.current.push(cb);
+      return () => {
+        const i = telemetryListenersRef.current.indexOf(cb);
+        if (i !== -1) telemetryListenersRef.current.splice(i, 1);
+      };
+    },
+    [],
+  );
 
   // TLE Modal
   const [showTleModal, setShowTleModal] = useState(false);
@@ -595,8 +611,14 @@ export function App() {
       listeners[i](perf);
     }
 
-    if (selTelemetry !== null || selectedTelemetry !== null) {
-      setSelectedTelemetry(selTelemetry);
+    telemetryRef.current = selTelemetry;
+    if (selTelemetry === null) {
+      if (selectedTelemetry !== null) setSelectedTelemetry(null);
+    } else if (selectedTelemetry === null || selectedTelemetry.satnum !== selTelemetry.satnum) {
+      setSelectedTelemetry(selTelemetry); // selection changed: re-render once
+    } else {
+      const ls = telemetryListenersRef.current;
+      for (let i = 0; i < ls.length; i++) ls[i](selTelemetry);
     }
   };
 
@@ -1228,13 +1250,17 @@ export function App() {
               setFollowSelected(false);
             }}
           />
-          <SatInspectorBody
-            t={selectedTelemetry}
-            followSelected={followSelected}
-            showGroundTrack={showGroundTrack}
-            onToggleFollow={() => setFollowSelected((f) => !f)}
-            onToggleGroundTrack={() => setShowGroundTrack((g) => !g)}
-          />
+          <LiveTelemetry initial={selectedTelemetry} subscribe={subscribeTelemetry}>
+            {(t) => (
+              <SatInspectorBody
+                t={t}
+                followSelected={followSelected}
+                showGroundTrack={showGroundTrack}
+                onToggleFollow={() => setFollowSelected((f) => !f)}
+                onToggleGroundTrack={() => setShowGroundTrack((g) => !g)}
+              />
+            )}
+          </LiveTelemetry>
         </aside>
       )}
       </div>
@@ -1445,21 +1471,25 @@ export function App() {
       </footer>
 
       {sheetVisible && selectedTelemetry && (
-        <SatSheet
-          t={selectedTelemetry}
-          state={sheetState}
-          heightPx={sheetH}
-          onStateChange={setSheetState}
-          onClose={() => {
-            setSelectedSatIndex(null);
-            setFollowSelected(false);
-          }}
-          sheetRef={sheetElRef}
-          followSelected={followSelected}
-          showGroundTrack={showGroundTrack}
-          onToggleFollow={() => setFollowSelected((f) => !f)}
-          onToggleGroundTrack={() => setShowGroundTrack((g) => !g)}
-        />
+        <LiveTelemetry initial={selectedTelemetry} subscribe={subscribeTelemetry}>
+          {(t) => (
+            <SatSheet
+              t={t}
+              state={sheetState}
+              heightPx={sheetH}
+              onStateChange={setSheetState}
+              onClose={() => {
+                setSelectedSatIndex(null);
+                setFollowSelected(false);
+              }}
+              sheetRef={sheetElRef}
+              followSelected={followSelected}
+              showGroundTrack={showGroundTrack}
+              onToggleFollow={() => setFollowSelected((f) => !f)}
+              onToggleGroundTrack={() => setShowGroundTrack((g) => !g)}
+            />
+          )}
+        </LiveTelemetry>
       )}
       </div>
 

@@ -312,6 +312,7 @@ export function ConstellationView({
   const trailStateRef = useRef({ prevSimMs: NaN });
   const gpuFrameRef = useRef({ t: 0, cosG: 1, sinG: 0 });
   const gpuRevRef = useRef(-1);
+  const dtEmaRef = useRef(0);
   const viewShiftState = useRef({ cur: 0, applied: 0, w: 0, h: 0 });
   const styleCtxRef = useRef<{
     shellMask: number;
@@ -812,8 +813,17 @@ export function ConstellationView({
     }
 
     const dtClamped = Math.min(delta, 0.1);
+    // At high playback speeds uneven frame deltas read as the sky stepping unevenly (one slow
+    // frame = a double jump), so advance by a smoothed step; large deviations (real stalls) pass
+    // through. At 1x the clock must stay on real time.
+    const dtEma = dtEmaRef.current;
+    const dtStep =
+      Math.abs(timeScale) > 1 && dtEma > 0 && Math.abs(dtClamped - dtEma) < 0.5 * dtEma
+        ? dtEma
+        : dtClamped;
+    dtEmaRef.current = dtEma > 0 ? dtEma * 0.9 + dtClamped * 0.1 : dtClamped;
     if (isPlaying) {
-      simTimeMsRef.current += dtClamped * 1000 * timeScale;
+      simTimeMsRef.current += dtStep * 1000 * timeScale;
     }
     const currentSimMs = simTimeMsRef.current;
 
