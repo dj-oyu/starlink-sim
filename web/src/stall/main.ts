@@ -13,6 +13,8 @@ interface Exp {
   heightFrac?: number; // canvas height as a fraction of the viewport (the drawing buffer shrinks too)
   preserve?: boolean;
   skipOdd?: boolean; // render every other frame (30 Hz)
+  bigTex?: boolean; // 3 x 4096^2 textures with mipmaps (~270 MB), like the real Earth
+  overlay?: 'blur' | 'flat'; // HUD-like DOM panels over the canvas (with / without backdrop-filter)
 }
 
 const WARMUP_S = 1.5;
@@ -20,7 +22,7 @@ const MEASURE_S = 8;
 const HITCH_MS = 28;
 
 const dprNative = window.devicePixelRatio || 1;
-const EXPS: Exp[] = [
+const EXPS_A: Exp[] = [
   { id: 'A1', title: 'full / dpr3 / AA (基準)', dpr: 3, aa: true, scene: 'full' },
   { id: 'A2', title: 'full / dpr2 / AA', dpr: 2, aa: true, scene: 'full' },
   { id: 'A3', title: 'full / dpr3 / AAなし', dpr: 3, aa: false, scene: 'full' },
@@ -35,30 +37,76 @@ const EXPS: Exp[] = [
   { id: 'A12', title: 'full / dpr3 / AA (再測定: 熱・順序の影響)', dpr: 3, aa: true, scene: 'full' },
 ];
 
+// Set B (default): the A set found NO stall with a small scene and no DOM, so these add the
+// remaining differences from the real app: big textures (GPU memory) and HUD-like DOM over the canvas.
+const EXPS_B: Exp[] = [
+  { id: 'B1', title: 'full+大テクスチャ / dpr3 / AA', dpr: 3, aa: true, scene: 'full', bigTex: true },
+  { id: 'B2', title: 'full+大テクスチャ / dpr2 / AA', dpr: 2, aa: true, scene: 'full', bigTex: true },
+  { id: 'B3', title: 'full / dpr3 / AA / HUD(blurあり)', dpr: 3, aa: true, scene: 'full', overlay: 'blur' },
+  { id: 'B4', title: 'full / dpr3 / AA / HUD(blurなし)', dpr: 3, aa: true, scene: 'full', overlay: 'flat' },
+  { id: 'B5', title: 'full+大テクスチャ+HUD(blur) / dpr3 / AA (実アプリ相当)', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'blur' },
+  { id: 'B6', title: 'full+大テクスチャ+HUD(blur) / dpr2 / AA', dpr: 2, aa: true, scene: 'full', bigTex: true, overlay: 'blur' },
+  { id: 'B7', title: 'full+大テクスチャ+HUD(blurなし) / dpr3 / AA', dpr: 3, aa: true, scene: 'full', bigTex: true, overlay: 'flat' },
+  { id: 'B8', title: 'full+大テクスチャ+HUD(blur) / dpr3 / AAなし', dpr: 3, aa: false, scene: 'full', bigTex: true, overlay: 'blur' },
+];
+
 const stage = document.getElementById('stage') as HTMLDivElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
 const report = document.getElementById('report') as HTMLDivElement;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function makeFullScene() {
-  const scene = new THREE.Scene();
-  // an Earth-like sphere: 4 texture fetches + a little math in the fragment shader (a stand-in for the real one)
-  const size = 1024;
+function makeTexture(size: number): THREE.DataTexture {
   const data = new Uint8Array(size * size * 4);
-  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 255) | 0;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = (i * 7) & 255;
+    data[i + 1] = (i >> 5) & 255;
+    data[i + 2] = (i >> 9) & 255;
+    data[i + 3] = 255;
+  }
   const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
+  return tex;
+}
+
+/** HUD-like panels (header, sheet, time bar) over the canvas; one of them updates 4x a second. */
+function makeOverlay(kind: 'blur' | 'flat'): HTMLElement {
+  const root = document.createElement('div');
+  root.style.cssText = 'position:fixed;inset:0;z-index:1;pointer-events:none';
+  const panel = (css: string) => {
+    const d = document.createElement('div');
+    const blur = kind === 'blur' ? 'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);' : '';
+    d.style.cssText = `position:absolute;left:8px;right:8px;border-radius:12px;border:1px solid rgba(56,189,248,.35);background:rgba(8,16,32,.55);${blur}${css}`;
+    root.appendChild(d);
+    return d;
+  };
+  panel('top:8px;height:52px');
+  panel('bottom:210px;height:72px');
+  const bar = panel('bottom:8px;height:140px;color:#7dd3fc;font:14px monospace;padding:8px');
+  const timer = window.setInterval(() => {
+    bar.textContent = new Date().toISOString();
+  }, 250);
+  (root as unknown as { stop: () => void }).stop = () => window.clearInterval(timer);
+  return root;
+}
+
+function makeFullScene(bigTex: boolean) {
+  const scene = new THREE.Scene();
+  // an Earth-like sphere: 4 texture fetches + a little math in the fragment shader (a stand-in for the real one)
+  const small = makeTexture(1024);
+  const t0 = bigTex ? makeTexture(4096) : small;
+  const t1 = bigTex ? makeTexture(4096) : small;
+  const t2 = bigTex ? makeTexture(4096) : small;
   const earth = new THREE.Mesh(
     new THREE.SphereGeometry(1, 64, 64),
     new THREE.ShaderMaterial({
-      uniforms: { t: { value: tex }, time: { value: 0 } },
+      uniforms: { t0: { value: t0 }, t1: { value: t1 }, t2: { value: t2 }, time: { value: 0 } },
       vertexShader:
         'varying vec2 vUv; varying vec3 vN; void main(){ vUv=uv; vN=normalMatrix*normal; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
       fragmentShader:
-        'uniform sampler2D t; uniform float time; varying vec2 vUv; varying vec3 vN; void main(){ vec3 a=texture2D(t,vUv).rgb; vec3 b=texture2D(t,vUv*3.0+time*0.01).rgb; vec3 c=texture2D(t,vUv*7.0).rgb; vec3 d=texture2D(t,vUv*13.0).rgb; float l=max(dot(normalize(vN),vec3(0.5,0.4,0.8)),0.0); gl_FragColor=vec4((a*0.5+b*0.2+c*0.2+d*0.1)*(0.2+l),1.0);}',
+        'uniform sampler2D t0; uniform sampler2D t1; uniform sampler2D t2; uniform float time; varying vec2 vUv; varying vec3 vN; void main(){ vec3 a=texture2D(t0,vUv).rgb; vec3 b=texture2D(t1,vUv*3.0+time*0.01).rgb; vec3 c=texture2D(t2,vUv*7.0).rgb; vec3 d=texture2D(t0,vUv*13.0).rgb; float l=max(dot(normalize(vN),vec3(0.5,0.4,0.8)),0.0); gl_FragColor=vec4((a*0.5+b*0.2+c*0.2+d*0.1)*(0.2+l),1.0);}',
     }),
   );
   scene.add(earth);
@@ -119,7 +167,9 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
   const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 100);
   camera.position.set(0, 0.4, 2.2);
   camera.lookAt(0, 0, 0);
-  const full = exp.scene === 'full' ? makeFullScene() : null;
+  const full = exp.scene === 'full' ? makeFullScene(!!exp.bigTex) : null;
+  const overlay = exp.overlay ? makeOverlay(exp.overlay) : null;
+  if (overlay) document.body.appendChild(overlay);
   const emptyScene = new THREE.Scene();
   const buffer = `${renderer.domElement.width}x${renderer.domElement.height}`;
 
@@ -186,6 +236,11 @@ async function runExp(exp: Exp, idx: number, total: number): Promise<Result> {
     hitchSpacingMs: spacings.length ? Math.round(spacings[Math.floor(spacings.length / 2)]) : null,
     slowSubmits,
   };
+  (overlay as unknown as { stop?: () => void } | null)?.stop?.();
+  overlay?.remove();
+  full?.earth.geometry.dispose();
+  const mat = full?.earth.material as THREE.ShaderMaterial | undefined;
+  if (mat) for (const k of ['t0', 't1', 't2']) (mat.uniforms[k].value as THREE.Texture).dispose();
   renderer.dispose();
   renderer.forceContextLoss();
   stage.innerHTML = '';
@@ -258,7 +313,8 @@ function show(results: Result[], startedAt: string) {
 async function main() {
   const params = new URLSearchParams(location.search);
   const only = params.get('only')?.split(',');
-  const list = only ? EXPS.filter((e) => only.includes(e.id)) : EXPS;
+  const all = params.get('set') === 'A' ? EXPS_A : EXPS_B;
+  const list = only ? all.filter((e) => only.includes(e.id)) : all;
   hud.textContent = `Stall probe: ${list.length} 実験 x ${WARMUP_S + MEASURE_S}s。画面に触れずそのままお待ちください。`;
   await sleep(2500);
   const startedAt = new Date().toISOString();
