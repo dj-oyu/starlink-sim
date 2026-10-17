@@ -1216,3 +1216,15 @@ export function ConstellationView({
     </>
   );
 }
+
+/** Diagnostics (`?cut=cv`): just the Earth, none of the constellation, wasm-driven or HUD-driven work. */
+export function EarthOnly({
+  visualSettings,
+  earthMeshRef,
+}: {
+  visualSettings: EarthVisualSettings;
+  earthMeshRef: { current: THREE.Mesh | null };
+}) {
+  const sunRef = useRef<[number, number, number]>([1, 0.2, 0.4]);
+  return <EarthGlobe sunDirectionRef={sunRef} visualSettings={visualSettings} earthMeshRef={earthMeshRef} />;
+}

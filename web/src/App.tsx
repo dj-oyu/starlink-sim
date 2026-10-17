@@ -18,6 +18,7 @@ import {
 } from './wasm/simEngine';
 import {
   ConstellationView,
+  EarthOnly,
   FullPerfSnapshot,
   ViewCommands,
 } from './components/ConstellationView';
@@ -74,6 +75,13 @@ const sharedDateJst = new Date();
 function stationShortName(name: string): string {
   return name.match(/\(([^)]+)\)/)?.[1] ?? name.split(' ')[0];
 }
+
+/** Diagnostics: `?cut=hud,cv` leaves out the HUD / the constellation (Earth only) to bisect stalls on-device. */
+const CUT = new Set(
+  (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('cut') ?? '' : '')
+    .split(',')
+    .filter(Boolean),
+);
 
 function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n);
@@ -846,6 +854,9 @@ export function App() {
           postFx={postFx}
           onCanvasClick={handleCanvasClick}
         >
+          {CUT.has('cv') ? (
+            <EarthOnly visualSettings={visualSettings} earthMeshRef={earthMeshRef} />
+          ) : (
           <ConstellationView
             engine={engine}
             simTimeMsRef={simTimeMsRef}
@@ -866,9 +877,12 @@ export function App() {
             earthMeshRef={earthMeshRef}
             onFrameStats={handleFrameStats}
           />
+          )}
         </Canvas>
       </div>
 
+      {!CUT.has('hud') && (
+      <>
       <div
         className={`hud-root ${sheetVisible && sheetState !== 'peek' ? 'hud-sheet-expanded' : ''}`}
         ref={hudRootRef}
@@ -1609,6 +1623,8 @@ export function App() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
