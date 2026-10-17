@@ -8,45 +8,36 @@ MoonBit で書いた SGP4 軌道伝播エンジン(WebAssembly)と、Starlink �
 
 ## 必要なもの
 
-- [MoonBit toolchain](https://docs.moonbitlang.com)(`moon`)
-- Node.js 20 以上(開発は v24)
+- Node.js 20 以上(開発は v24)と、パッケージマネージャー(**npm または pnpm**。どちらでも動きます)
+- [MoonBit toolchain](https://docs.moonbitlang.com)(`moon`)は任意です。未インストールの場合は、リポジトリに同梱の wasm(`web/public/assets/wasm/starlink-sim.wasm`)をそのまま使います。ソースから再ビルドするときに必要です。
 
 ## 開発
 
 ```sh
 cd web
-npm install
-npm run dev      # 初回は素材を自動取得し、Wasm をビルドして Vite を起動
-npm run build    # 本番ビルド
+
+# npm
+npm ci            # 依存関係のインストール(package-lock.json)
+npm run dev       # 初回は素材を自動取得し、Wasm をビルドして Vite を起動
+npm run build     # 本番ビルド
+npm run typecheck
+
+# pnpm
+pnpm install --frozen-lockfile   # pnpm-lock.yaml
+pnpm dev
+pnpm build
+pnpm typecheck
 ```
 
-### LAN 内のスマートフォン(iPhone など)から見る
+スクリプトは、`pre*` フック(pnpm では既定で動かないことがある)に頼らず、plain node のスクリプトを `&&` でつないでいるため、npm でも pnpm でも同じ動作です。
+
+**ロックファイルは 2 つ**(`web/package-lock.json` と `web/pnpm-lock.yaml`)を管理しています。依存関係を変えたときは、両方を更新してください。
 
 ```sh
-cd web
-npm run dev:lan   # vite --host: 0.0.0.0 で待ち受け
+npm install --package-lock-only && pnpm install --lockfile-only
 ```
 
-起動時に表示される `Network:` の URL(例: `http://192.168.1.17:5173/`)を、同じ Wi-Fi のスマートフォンで開きます。つながらない場合は Windows ファイアウォールで Node.js の受信(プライベート/パブリック)を許可してください。開発サーバーは認証なしで LAN に公開されるため、信頼できるネットワークでのみ使ってください。なお HTTP のため、クリップボード API など HTTPS 限定の機能は使えません。
-
-### モバイル(iOS Safari)での性能
-
-iOS Safari(JavaScriptCore)は、この wasm をデスクトップの Chrome より **約 20 倍遅く**実行します(iPhone で全衛星の伝播が約 19ms)。そのため、計算コストが 1 フレームあたり 4ms を超える環境では、衛星を最大 8 分割し、1 フレームに 1 分割だけ更新します(`web/src/wasm/simEngine.ts` の `propagate`)。再生速度が速い(+100x 以上)ときや、時刻を大きく飛ばしたときは、位置のずれを避けるため全機を更新します。
-
-- `?slices=N`(例: `http://…:5173/?slices=4`)で分割数を強制できます(0 または未指定で自動)。
-- Perf Stats の「Copy JSON」には、端末情報と実際の分割数(`wasmSlicesPerFrame`)が含まれます。
-- Perf Stats の「🧪 GPU Bench」は、端末上の GPU 負荷を測ります(約 40 秒)。Safari には GPU タイマーがないため、描画を連続実行して最後に `readPixels` で完了を待つ方式です。ピクセル比、地球シェーダ(雲・大気・昼夜・モード)、衛星・航跡・通信リンク別のコストと、HUD の `backdrop-filter` の影響(実フレームレート)を比較し、結果をコピーできます。
-
-### GPU モード(遅い端末で自動的に有効)
-
-衛星の位置を GPU の頂点シェーダで外挿する経路です。wasm の SGP4 は「アンカー」(ある時刻の厳密な位置と速度)を低頻度で更新するだけで、毎フレームの JS からの位置の書き込み・アップロード・航跡の計算が不要になります。遅い端末(iPhone など)向けです。
-
-- 外挿は、アンカーの状態を軌道面内で円運動として回転させます(`r(dt) = r0·cos(w·dt) + (v0/w)·sin(w·dt)`、`w = |v0|/|r0|`)。その後 GMST で ECEF に回し、Three.js の軸に変換します。
-- 精度(実際の TLE 10,652 機、厳密な伝播との差): アンカーから 60 秒後で平均 20m(最大 59m)、300 秒後で平均 0.49km(最大 1.4km)、600 秒後で平均 2.0km。線形外挿(`p + v·dt`)は 60 秒後で 15km なので、約 300 倍良い値です。
-- アンカー更新のサイクルは、通常 30 シミュレーション秒以内です(CPU 側の機能: 可視リスト、スカイプロット、クリック選択の鮮度)。高速再生(+100x 超)では 240 秒まで許容し、そのぶん CPU 側の機能の位置は古くなります。
-- 選択中のマーカーや通信リンクの端点は、同じ式の JS 版で外挿するため、GPU が描く衛星とずれません。
-- **自動選択**: 起動時に全衛星の伝播を数回測り(デスクトップで約 3ms、iPhone で約 70ms)、1 回あたりの中央値が 4ms を超える端末で自動的に有効になります。デスクトップは従来の経路のままです。URL の `?gpu=1` で強制オン、`?gpu=0` で強制オフにできます。
-- Perf Stats の「Copy JSON」に、使われている経路(`gpuPositionPath`)と起動時の計測値(`startupFullPassCalibrationMs`)が含まれます。
+pnpm 10 以降は、依存パッケージのビルドスクリプトを既定でブロックします。`web/pnpm-workspace.yaml` で esbuild の postinstall を許可しているため、`pnpm install` は警告なしで通ります(npm はこのファイルを無視します)。
 
 MoonBit 側だけを操作する場合(リポジトリ直下):
 

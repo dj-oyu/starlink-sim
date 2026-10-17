@@ -1,0 +1,7 @@
+# pnpm: allow esbuild's postinstall (pnpm >= 10 blocks dependency build scripts by default;
+# `pnpm install` would otherwise exit with ERR_PNPM_IGNORED_BUILDS). npm ignores this file.
+allowBuilds:
+  esbuild: true
+# same permission for pnpm 10.x
+onlyBuiltDependencies:
+  - esbuild
