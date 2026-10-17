@@ -133,6 +133,7 @@ export async function runGpuBench(d: GpuBenchDeps): Promise<Record<string, unkno
     const variants: [string, Partial<EarthVisualSettings>][] = [
       ['clouds off', { showClouds: false }],
       ['atmosphere off', { showAtmosphere: false }],
+      ['lens flare off', { showFlare: false }],
       ['day/night shading off', { dayNightShading: false }],
       [
         'clouds+atmosphere+day/night off',

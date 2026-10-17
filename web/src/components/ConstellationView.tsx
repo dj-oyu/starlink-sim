@@ -9,6 +9,7 @@ import {
   SatelliteTelemetry,
 } from '../wasm/simEngine';
 import { EarthGlobe, EarthVisualSettings } from './EarthGlobe';
+import { LensFlare } from './LensFlare';
 
 export interface FullPerfSnapshot extends RenderPerfStats {
   wasmPureSgp4Ms: number;
@@ -1189,10 +1190,13 @@ export function ConstellationView({
   });
 
   return (
-    <EarthGlobe
-      sunDirectionRef={sunDirectionRef}
-      visualSettings={visualSettings}
-      earthMeshRef={earthMeshRef}
-    />
+    <>
+      <EarthGlobe
+        sunDirectionRef={sunDirectionRef}
+        visualSettings={visualSettings}
+        earthMeshRef={earthMeshRef}
+      />
+      <LensFlare sunDirectionRef={sunDirectionRef} enabled={visualSettings.showFlare} />
+    </>
   );
 }

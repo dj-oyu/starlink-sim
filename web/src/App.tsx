@@ -275,6 +275,7 @@ export function App() {
     showBorders: false,
     showGraticule: false,
     dayNightShading: true,
+    showFlare: true,
   });
 
   // Constellation Filtering & Search
@@ -927,6 +928,19 @@ export function App() {
                     }
                   />
                   昼夜の陰影 (Day/Night)
+                </label>
+                <label className="menu-check">
+                  <input
+                    type="checkbox"
+                    checked={visualSettings.showFlare}
+                    onChange={() =>
+                      setVisualSettings((s) => ({
+                        ...s,
+                        showFlare: !s.showFlare,
+                      }))
+                    }
+                  />
+                  光学演出 (Lens flare)
                 </label>
               </div>
             )}

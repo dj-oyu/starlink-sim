@@ -10,6 +10,8 @@ export interface EarthVisualSettings {
   showBorders: boolean;
   showGraticule: boolean;
   dayNightShading: boolean;
+  /** Sun glare / ghosts / ocean glint overlay */
+  showFlare: boolean;
 }
 
 interface EarthGlobeProps {
