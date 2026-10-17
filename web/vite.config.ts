@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
+import tleSync from './server/vite-plugin-tle.mjs';
 
 export default defineConfig({
-  plugins: [preact()],
+  plugins: [preact(), tleSync()],
   resolve: {
     alias: {
       react: 'preact/compat',

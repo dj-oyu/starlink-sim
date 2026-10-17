@@ -1,14 +1,16 @@
 // Downloads third-party runtime assets that are intentionally not committed
 // (see ../README.md). Idempotent: existing files are kept unless --force is given.
 //
-//   node scripts/fetch-assets.mjs [--force] [--only=textures|tle]
+//   node scripts/fetch-assets.mjs [--force]
+//
+// (The Starlink TLE is NOT handled here: the dev/preview server downloads and refreshes it by
+// itself, see server/tle-sync.mjs.)
 import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'assets');
 const force = process.argv.includes('--force');
-const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7);
 
 // Earth textures shipped in the three.js repository (MIT). Pinned to the tag
 // matching the `three` dependency in package.json.
@@ -23,17 +25,7 @@ const TEXTURES = [
 const textureUrl = (name) =>
   `https://raw.githubusercontent.com/mrdoob/three.js/${THREE_TAG}/examples/textures/planets/${name}`;
 
-// CelesTrak GP data (3-line format with names). It refuses repeated downloads
-// within ~2 hours and answers with a plain-text notice instead of data.
-const TLE_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=3le';
-
 const exists = (p) => stat(p).then((s) => s.size > 0, () => false);
-const ageMs = (p) => stat(p).then((s) => Date.now() - s.mtimeMs, () => Infinity);
-
-// Starlink TLEs go stale within days; refresh on dev/build when older than this.
-// (CelesTrak rate-limits repeats, so keep this well above its 2 h minimum.)
-const TLE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
 async function download(url) {
   const res = await fetch(url, { headers: { 'user-agent': 'starlink-sim-fetch-assets' } });
   if (!res.ok) {
@@ -71,28 +63,7 @@ async function fetchTextures() {
   }
 }
 
-async function fetchTle() {
-  const dest = join(root, 'data', 'starlink.tle');
-  const have = await exists(dest);
-  if (!force && have && (await ageMs(dest)) < TLE_MAX_AGE_MS) return;
-  try {
-    const text = (await download(TLE_URL)).toString('utf8');
-    if (!looksLikeTle(text)) throw new Error(`unexpected response: ${text.slice(0, 120).trim()}`);
-    await save(dest, text);
-    console.log(`[assets] downloaded data/starlink.tle (${(text.length / 1024) | 0} KB)`);
-  } catch (e) {
-    // Never fail the build over the TLE: with an existing file we keep it; without one the app
-    // downloads the TLE itself on first load (CelesTrak also limits repeated downloads to one
-    // per ~2 hours per IP, so a 403 here is expected right after another download).
-    console.error(
-      `[assets] ${have ? 'kept existing' : 'skipped'} data/starlink.tle: ${e.message}` +
-        (have ? '' : '\n[assets] (not fatal: the app fetches the TLE on first load; re-run `npm run fetch:assets -- --only=tle` later to cache it)'),
-    );
-  }
-}
-
-if (!only || only === 'textures') await fetchTextures();
-if (!only || only === 'tle') await fetchTle();
+await fetchTextures();
 if (failed) {
   console.error('[assets] Some assets could not be downloaded. Check your network and re-run: npm run fetch:assets');
   process.exit(1);

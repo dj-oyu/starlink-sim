@@ -12,7 +12,8 @@
     "build": "node scripts/fetch-assets.mjs && node scripts/build-wasm.mjs && vite build",
     "serve:lan": "node scripts/fetch-assets.mjs && node scripts/build-wasm.mjs && vite build && vite preview --host --port 4173",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test server/tle-sync.test.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

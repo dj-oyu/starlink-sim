@@ -13,3 +13,5 @@ web/public/assets/data/starlink.tle
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+web/public/assets/data/.starlink.tle.attempt

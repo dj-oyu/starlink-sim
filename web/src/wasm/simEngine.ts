@@ -314,17 +314,46 @@ export class StarlinkSimEngine {
   }
 
   async init(): Promise<void> {
-    const [wasmRes, tleRes] = await Promise.all([
-      fetch('/assets/wasm/starlink-sim.wasm'),
-      fetch('/assets/data/starlink.tle'),
-    ]);
+    const wasmRes = await fetch('/assets/wasm/starlink-sim.wasm');
     const wasmBytes = await wasmRes.arrayBuffer();
     const { instance } = await WebAssembly.instantiate(wasmBytes, {});
     this.api = instance.exports as unknown as WasmSimExports;
 
-    const tleText = await tleRes.text();
-    // (the position path is chosen inside loadTleDataset, once satellites exist)
-    this.loadTleDataset(tleText);
+    // The server owns the TLE file and keeps it fresh; we only read it. (If it is not available
+    // yet, the app starts empty and the periodic server check in App fills it in later. The
+    // position path is chosen inside loadTleDataset, once satellites exist.)
+    await this.loadTleFromServer();
+  }
+
+  /** ETag / Last-Modified of the server's TLE file that is currently loaded (change detection only). */
+  private tleVersion = '';
+
+  /**
+   * Load the Starlink TLE from this app's own server (`/assets/data/starlink.tle`). The server
+   * decides when to refresh it from upstream (by file timestamp, with a shared cool-down), so
+   * clients never contact CelesTrak and store nothing. Conditional requests keep polling cheap:
+   * the dataset is only re-parsed when the server's file actually changed (unless `force`).
+   */
+  async loadTleFromServer(
+    force = false,
+  ): Promise<{ status: 'loaded' | 'unchanged' | 'unavailable'; count: number }> {
+    try {
+      const res = await fetch('/assets/data/starlink.tle', { cache: 'no-cache' });
+      if (!res.ok) return { status: 'unavailable', count: this.count };
+      const version = res.headers.get('etag') || res.headers.get('last-modified') || '';
+      if (!force && version && version === this.tleVersion && this.count > 0) {
+        return { status: 'unchanged', count: this.count };
+      }
+      const text = await res.text();
+      if (!/^1 \d{5}/m.test(text) || !/^2 \d{5}/m.test(text)) {
+        return { status: 'unavailable', count: this.count }; // e.g. an HTML fallback page
+      }
+      const count = this.loadTleDataset(text);
+      if (count > 0) this.tleVersion = version;
+      return { status: count > 0 ? 'loaded' : 'unavailable', count: this.count };
+    } catch {
+      return { status: 'unavailable', count: this.count };
+    }
   }
 
   /**

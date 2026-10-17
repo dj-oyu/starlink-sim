@@ -20,12 +20,6 @@ import {
   PerfListener,
 } from './components/PerfMonitorPanel';
 import {
-  AUTO_CHECK_EVERY_MS,
-  autoRefreshDue,
-  fetchLatestTle,
-  loadCachedTle,
-} from './wasm/tleRefresh';
-import {
   Crosshair,
   House,
   Rotate3d,
@@ -352,10 +346,6 @@ export function App() {
     sim
       .init()
       .then(() => {
-        // Prefer a recent live TLE cached from a previous session (avoids
-        // re-downloading on every reload; CelesTrak rate-limits repeats).
-        const cached = loadCachedTle();
-        if (cached) sim.loadTleDataset(cached);
         const now = Date.now();
         simTimeMsRef.current = now;
         anchorTimeMsRef.current = now;
@@ -575,43 +565,71 @@ export function App() {
     }
   };
 
-  const applyLiveTle = (text: string): number => {
-    if (!engine) return 0;
-    const count = engine.loadTleDataset(text);
-    setSelectedSatIndex(null);
-    setSatVersion((v) => v + 1);
-    return count;
-  };
-
-  const handleFetchLatestCelestrak = async () => {
+  // The server owns the TLE file and refreshes it from upstream by itself (by file timestamp, one
+  // shared cool-down). The client only reads it: nothing is stored here and CelesTrak is never
+  // contacted from the browser.
+  const syncTleFromServer = async (force = false) => {
     if (!engine) return;
-    setTleStatusMsg('Fetching latest Starlink TLEs from CelesTrak...');
-    const r = await fetchLatestTle();
-    if (!r.ok) {
-      setTleStatusMsg(r.message);
-      return;
+    const r = await engine.loadTleFromServer(force);
+    if (r.status === 'loaded') {
+      setSelectedSatIndex(null);
+      setSatVersion((v) => v + 1);
+      setTleStatusMsg(`サーバーの最新TLEを読み込みました (${r.count.toLocaleString()} 機)。`);
+    } else if (force) {
+      setTleStatusMsg(
+        r.status === 'unchanged'
+          ? 'サーバーのTLEは更新されていません。'
+          : 'サーバーからTLEを取得できませんでした (サーバー側で再試行します)。',
+      );
     }
-    const count = applyLiveTle(r.text);
-    setTleStatusMsg(
-      `Updated! Loaded ${count.toLocaleString()} live Starlink satellites from CelesTrak.`,
-    );
   };
 
-  // Periodic refresh: keeps the elements from going stale while the app stays open.
+  // Poll the app's own server: every 15 s while there is no data yet (first run, server still
+  // downloading), then every 10 min plus whenever the tab becomes visible. Conditional requests
+  // make unchanged checks nearly free.
   useEffect(() => {
     if (!engine) return;
-    const tick = async () => {
-      if (!autoRefreshDue()) return;
-      const r = await fetchLatestTle();
-      if (r.ok) {
-        const count = applyLiveTle(r.text);
-        setTleStatusMsg(`Auto-refreshed TLEs (${count.toLocaleString()} satellites).`);
-      }
+    let stopped = false;
+    let timer = 0;
+    const loop = async () => {
+      await syncTleFromServer();
+      if (!stopped) timer = window.setTimeout(loop, engine.count === 0 ? 15_000 : 10 * 60_000);
     };
-    tick();
-    const id = setInterval(tick, AUTO_CHECK_EVERY_MS);
-    return () => clearInterval(id);
+    timer = window.setTimeout(loop, engine.count === 0 ? 2_000 : 10 * 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void syncTleFromServer();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [engine]);
+
+  // Server-side TLE sync status for the TLE dialog
+  const [tleServerStatus, setTleServerStatus] = useState('');
+  useEffect(() => {
+    if (!showTleModal) return;
+    let cancelled = false;
+    fetch('/api/tle-status', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((s) => {
+        if (cancelled) return;
+        const age = s.ageSec == null ? '' : ` (${(s.ageSec / 3600).toFixed(1)} 時間前)`;
+        const parts = [
+          s.exists ? `サーバーのTLE: ${new Date(s.updatedAt).toLocaleString()}${age}` : 'サーバーにTLEがまだありません',
+          s.refreshing ? '更新中…' : s.stale ? '古いため更新待ち' : '最新',
+        ];
+        if (s.cooldownRemainingSec > 0) parts.push(`次の取得まで ${Math.ceil(s.cooldownRemainingSec / 60)} 分`);
+        if (s.lastError) parts.push(`直近のエラー: ${s.lastError}`);
+        setTleServerStatus(parts.join(' / '));
+      })
+      .catch(() => !cancelled && setTleServerStatus(''));
+    return () => {
+      cancelled = true;
+    };
+  }, [showTleModal, tleStatusMsg]);
 
   if (!engine) {
     return (
@@ -1359,30 +1377,22 @@ export function App() {
               </button>
             </div>
             <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.5 }}>
-              現在ローカルアセット (<code>/assets/data/starlink.tle</code>) から{' '}
               <strong>{engine.count.toLocaleString()} 機</strong>{' '}
-              のStarlink軌道データを読み込み済みです。外部通信なしで過去・未来の任意の時刻をSGP4計算できます。
+              のStarlink軌道データを読み込み済みです。TLEはサーバーが CelesTrak から自動で取得・更新し
+              (ファイルのタイムスタンプで判断し、複数のクライアントで共有)、このアプリはサーバーのデータを読むだけです。
+              過去・未来の任意の時刻をSGP4計算できます。
             </p>
+            {tleServerStatus && (
+              <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.5 }}>
+                {tleServerStatus}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 className="btn active-emerald"
-                onClick={handleFetchLatestCelestrak}
+                onClick={() => void syncTleFromServer(true)}
               >
-                🌐 CelesTrakから最新TLEを1回取得
-              </button>
-              <button
-                className="btn"
-                onClick={async () => {
-                  const res = await fetch('/assets/data/starlink.tle');
-                  const text = await res.text();
-                  const count = engine.loadTleDataset(text);
-                  setSatVersion((v) => v + 1);
-                  setTleStatusMsg(
-                    `Restored local snapshot (${count.toLocaleString()} satellites).`,
-                  );
-                }}
-              >
-                🔄 ローカル初期データに戻す
+                🔄 サーバーの最新データを再読み込み
               </button>
             </div>
             <div>
