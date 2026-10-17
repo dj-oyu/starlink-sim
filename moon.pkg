@@ -42,6 +42,8 @@ options(
         "get_sun_ecef_z",
         "compute_orbit_path",
         "get_orbit_path_coord",
+        "tle_scan_buffer",
+        "tle_newest_epoch_ms",
       ],
       "export-memory-name": "memory",
     },

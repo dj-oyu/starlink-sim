@@ -365,3 +365,55 @@ test "anchored slices refresh the same state as plain slices and expose anchor b
   // invalid slice arguments are rejected
   assert_eq(@starlink-sim.propagate_constellation_slice_anchored(t, 3, 3, t), 0)
 }
+
+///|
+fn tle_bytes(s : String) -> FixedArray[Byte] {
+  let a : FixedArray[Byte] = FixedArray::make(s.length(), b'\x00')
+  for i in 0..<s.length() {
+    a[i] = s[i].to_int().to_byte()
+  }
+  a
+}
+
+///|
+test "newest_epoch_unix_ms picks the newest epoch (UTC, YYDDD.DDDDDDDD)" {
+  let text = "STARLINK-1\n1 44713U 19074A   24001.50000000  .00051451  00000+0  47456-3 0  9996\n2 44713  53.1444 201.1192 0002831 127.3037 232.8238 15.67116217383094\nSTARLINK-2\n1 44714U 19074B   24060.25000000  .00051451  00000+0  47456-3 0  9996\n"
+  let b = tle_bytes(text)
+  let now = 1.8e12 // 2027-01
+  // 2024-02-29 06:00 UTC (day 60.25 of a leap year)
+  assert_eq(
+    @starlink-sim.newest_epoch_unix_ms(b, b.length(), now),
+    1709186400000.0,
+  )
+}
+
+///|
+test "newest_epoch_unix_ms ignores future epochs, garbage and empty input" {
+  let fut = tle_bytes(
+    "1 44713U 19074A   24001.50000000  .00051451  00000+0  47456-3 0  9996\n",
+  )
+  // now = 2023-01-01: the 2024 epoch is >1 day ahead -> ignored
+  assert_eq(
+    @starlink-sim.newest_epoch_unix_ms(fut, fut.length(), 1.6725312e12),
+    0.0,
+  )
+  let bad = tle_bytes("1 44713U 19074A   24abc.50000000  .0\n2 44713\n")
+  assert_eq(@starlink-sim.newest_epoch_unix_ms(bad, bad.length(), 1.8e12), 0.0)
+  let empty = tle_bytes("")
+  assert_eq(@starlink-sim.newest_epoch_unix_ms(empty, 0, 1.8e12), 0.0)
+  // 2-digit years: < 57 -> 20xx, >= 57 -> 19xx
+  let y00 = tle_bytes(
+    "1 00005U 58002B   00001.00000000  .00000023  00000-0  28098-4 0  4753\n",
+  )
+  assert_eq(
+    @starlink-sim.newest_epoch_unix_ms(y00, y00.length(), 1.8e12),
+    946684800000.0,
+  )
+  let y99 = tle_bytes(
+    "1 00005U 58002B   99001.00000000  .00000023  00000-0  28098-4 0  4753\n",
+  )
+  assert_eq(
+    @starlink-sim.newest_epoch_unix_ms(y99, y99.length(), 1.8e12),
+    915148800000.0,
+  )
+}

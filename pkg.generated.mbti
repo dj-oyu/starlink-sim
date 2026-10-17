@@ -94,6 +94,8 @@ pub let minutes_per_day : Double
 
 pub let mu_earth : Double
 
+pub fn newest_epoch_unix_ms(FixedArray[Byte], Int, Double) -> Double
+
 pub fn normalize_rad(Double) -> Double
 
 pub fn parse_tle_lines(String, String) -> TleData
@@ -133,6 +135,10 @@ pub fn sun_direction_ecef(Double) -> (Double, Double, Double)
 pub fn teme_to_ecef(Double, Double, Double, Double) -> (Double, Double, Double)
 
 pub fn tle_epoch_to_jd(Int, Double) -> Double
+
+pub fn tle_newest_epoch_ms(Int, Double) -> Double
+
+pub fn tle_scan_buffer(Int) -> Int
 
 pub let two_pi : Double
 

@@ -13,7 +13,9 @@
 //   - a download whose newest epoch is OLDER than the one we already have never replaces it
 // No dependencies: plain Node (>= 18, global fetch).
 import { mkdir, rename, stat, writeFile, readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const CELESTRAK_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle';
 export const TLE_URL_PATH = '/assets/data/starlink.tle';
@@ -25,29 +27,26 @@ export function looksLikeTle(text) {
   return /^1 \d{5}/m.test(text) && /^2 \d{5}/m.test(text) && text.split('\n').length > 300;
 }
 
+// The TLE epoch parser lives in MoonBit (tle.mbt `newest_epoch_unix_ms`), the same package that
+// parses TLEs for the simulator, so the column layout is defined in one place. The server loads the
+// wasm the web app ships (public/assets/wasm/starlink-sim.wasm; rebuilt by `npm run build:wasm`).
+const WASM_PATH = fileURLToPath(new URL('../public/assets/wasm/starlink-sim.wasm', import.meta.url));
+let wasm = null;
+function wasmExports() {
+  wasm ??= new WebAssembly.Instance(new WebAssembly.Module(readFileSync(WASM_PATH)), {}).exports;
+  return wasm;
+}
+
 /**
  * Epoch (ms since Unix epoch, UTC) of the newest element set in a TLE text, or 0 if none can be
- * read. Line 1: columns 19-20 = year (2 digits), 21-32 = day of year with fraction (1-based).
- * Epochs more than a day in the future are ignored (clock skew / garbage).
+ * read. Epochs more than a day in the future are ignored (clock skew / garbage).
  */
 export function newestEpochMs(text, now = Date.now()) {
-  let newest = 0;
-  let from = 0;
-  while (from < text.length) {
-    let nl = text.indexOf('\n', from);
-    if (nl === -1) nl = text.length;
-    if (text.charCodeAt(from) === 49 /* '1' */ && text.charCodeAt(from + 1) === 32 && nl - from >= 32) {
-      const yy = Number(text.slice(from + 18, from + 20));
-      const day = Number.parseFloat(text.slice(from + 20, from + 32));
-      if (Number.isFinite(yy) && Number.isFinite(day) && day >= 1 && day < 367) {
-        const year = yy < 57 ? 2000 + yy : 1900 + yy;
-        const ms = Date.UTC(year, 0, 1) + (day - 1) * 86400000;
-        if (ms <= now + 86400000 && ms > newest) newest = ms;
-      }
-    }
-    from = nl + 1;
-  }
-  return newest;
+  const bytes = Buffer.from(text, 'utf8');
+  const e = wasmExports();
+  const ptr = e.tle_scan_buffer(bytes.length);
+  new Uint8Array(e.memory.buffer, ptr, bytes.length).set(bytes); // read memory.buffer after the alloc: it may have grown
+  return e.tle_newest_epoch_ms(bytes.length, now);
 }
 
 async function mtimeMs(path) {

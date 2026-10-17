@@ -175,3 +175,126 @@ pub fn parse_tle_lines(line1 : String, line2 : String) -> TleData {
     mo_deg, no_kozai_rpd,
   )
 }
+
+///|
+/// Parse ASCII digits (with at most one '.') in buf[start, end) after trimming spaces.
+/// Returns -1.0 when the field is empty or contains anything else.
+fn parse_ascii_number(
+  buf : FixedArray[Byte],
+  start : Int32,
+  end : Int32,
+) -> Double {
+  let mut i = start
+  let mut e = end
+  while i < e && buf[i] == b' ' {
+    i += 1
+  }
+  while e > i && buf[e - 1] == b' ' {
+    e -= 1
+  }
+  if i >= e {
+    return -1.0
+  }
+  let mut int_part = 0.0
+  let mut frac = 0.0
+  let mut scale = 1.0
+  let mut seen_dot = false
+  let mut digits = 0
+  while i < e {
+    let c = buf[i].to_int()
+    if c == 46 && !seen_dot {
+      seen_dot = true
+    } else if c >= 48 && c <= 57 {
+      digits += 1
+      if seen_dot {
+        scale = scale / 10.0
+        frac = frac + (c - 48).to_double() * scale
+      } else {
+        int_part = int_part * 10.0 + (c - 48).to_double()
+      }
+    } else {
+      return -1.0
+    }
+    i += 1
+  }
+  if digits == 0 {
+    -1.0
+  } else {
+    int_part + frac
+  }
+}
+
+///|
+/// Days since 1970-01-01 of a proleptic Gregorian date (month 1-12, day 1-31).
+fn days_from_civil(year : Int32, month : Int32, day : Int32) -> Int32 {
+  let y = if month <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = (month + 9) % 12
+  let doy = (153 * mp + 2) / 5 + day - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+///|
+/// Epoch (ms since the Unix epoch, UTC) of the newest element set in the TLE text `buf[0, len)`
+/// (ASCII bytes), or 0 if none can be read. Line 1 holds the epoch in columns 19-20 (2-digit
+/// year) and 21-32 (day of year with fraction, 1-based). Epochs more than a day after `now_ms`
+/// are ignored (clock skew / garbage).
+pub fn newest_epoch_unix_ms(
+  buf : FixedArray[Byte],
+  len : Int32,
+  now_ms : Double,
+) -> Double {
+  let n = if len > buf.length() { buf.length() } else { len }
+  let mut newest = 0.0
+  let mut from = 0
+  while from < n {
+    let mut nl = from
+    while nl < n && buf[nl] != b'\n' {
+      nl += 1
+    }
+    if buf[from] == b'1' &&
+      from + 1 < n &&
+      buf[from + 1] == b' ' &&
+      nl - from >= 32 {
+      let yy = parse_ascii_number(buf, from + 18, from + 20)
+      let day = parse_ascii_number(buf, from + 20, from + 32)
+      if yy >= 0.0 && day >= 1.0 && day < 367.0 {
+        let yy_i = yy.to_int()
+        let year = if yy_i < 57 { 2000 + yy_i } else { 1900 + yy_i }
+        let ms = days_from_civil(year, 1, 1).to_double() * 86400000.0 +
+          (day - 1.0) * 86400000.0
+        if ms <= now_ms + 86400000.0 && ms > newest {
+          newest = ms
+        }
+      }
+    }
+    from = nl + 1
+  }
+  newest
+}
+
+///|
+/// Raw wasm pointer of a FixedArray[Byte] (assumed to point directly at the element data;
+/// checked by the round-trip test in tle_wbtest.mbt).
+#borrow(a)
+extern "wasm" fn addr_of_bytes(a : FixedArray[Byte]) -> Int32 =
+  #|(func (param i32) (result i32) (local.get 0))
+
+///|
+let tle_scan_buf : Ref[FixedArray[Byte]] = Ref(FixedArray::make(0, b'\x00'))
+
+///|
+/// Allocate the TLE scan buffer for `len` bytes and return its wasm address. The host writes the
+/// TLE text (ASCII) there and calls `tle_newest_epoch_ms`. Valid until the next call.
+pub fn tle_scan_buffer(len : Int32) -> Int32 {
+  tle_scan_buf.val = FixedArray::make(len, b'\x00')
+  addr_of_bytes(tle_scan_buf.val)
+}
+
+///|
+/// Newest TLE epoch (ms since Unix epoch, 0 if none) of the first `len` bytes in the scan buffer.
+pub fn tle_newest_epoch_ms(len : Int32, now_ms : Double) -> Double {
+  newest_epoch_unix_ms(tle_scan_buf.val, len, now_ms)
+}
