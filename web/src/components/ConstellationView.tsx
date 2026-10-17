@@ -248,7 +248,20 @@ const TRAIL_VERT_GPU = /* glsl */ `
 `;
 
 const _followCurPos = new THREE.Vector3();
-const _followDelta = new THREE.Vector3();
+const _followOffset = new THREE.Vector3();
+const _followPrevDir = new THREE.Vector3();
+const _followCurDir = new THREE.Vector3();
+const _followQuat = new THREE.Quaternion();
+
+// Follow-camera distance limits (measured from the satellite) and the keep-out radius around the
+// Earth (Earth radius = 1) so the camera can never end up inside the globe.
+const FOLLOW_MIN_DIST = 0.12;
+const FOLLOW_MAX_DIST = 3;
+const FOLLOW_START_MIN = 0.3;
+const FOLLOW_START_MAX = 1.2;
+const CAMERA_MIN_RADIUS = 1.03;
+const GLOBE_MIN_DIST = 1.07; // OrbitControls limits when orbiting the globe (not following)
+const GLOBE_MAX_DIST = 7;
 
 export function ConstellationView({
   engine,
@@ -720,11 +733,22 @@ export function ConstellationView({
 
   useEffect(() => {
     if (!followSelected) {
+      controls.minDistance = GLOBE_MIN_DIST;
+      controls.maxDistance = GLOBE_MAX_DIST;
       controls.target.set(0, 0, 0);
       controls.update();
       prevSelectedPosRef.current = null;
+    } else {
+      // distances are measured from the satellite while following
+      controls.minDistance = FOLLOW_MIN_DIST;
+      controls.maxDistance = FOLLOW_MAX_DIST;
     }
   }, [followSelected, controls]);
+
+  // A different satellite: the rotation reference belongs to the old one
+  useEffect(() => {
+    prevSelectedPosRef.current = null;
+  }, [selectedSatIndex]);
 
   useFrame((threeState, delta) => {
     if (satCount === 0) return;
@@ -1052,15 +1076,30 @@ export function ConstellationView({
 
       if (followSelected) {
         _followCurPos.set(sx, sy, sz);
-        if (!prevSelectedPosRef.current) {
-          prevSelectedPosRef.current = new THREE.Vector3(sx, sy, sz);
-          _followDelta.copy(_followCurPos).normalize().multiplyScalar(0.38);
-          camera.position.copy(_followCurPos).add(_followDelta);
+        const prev = prevSelectedPosRef.current;
+        if (!prev) {
+          // Start following: keep the current viewing distance (clamped) and look from above the
+          // satellite's horizon; below it (e.g. from behind the Earth) fall back to straight above.
+          _followCurDir.copy(_followCurPos).normalize();
+          _followOffset.copy(camera.position).sub(_followCurPos);
+          const dist = Math.min(FOLLOW_START_MAX, Math.max(FOLLOW_START_MIN, _followOffset.length()));
+          _followOffset.normalize();
+          if (_followOffset.dot(_followCurDir) < 0.25) _followOffset.copy(_followCurDir);
+          camera.position.copy(_followCurPos).addScaledVector(_followOffset, dist);
+          prevSelectedPosRef.current = _followCurPos.clone();
         } else {
-          _followDelta.copy(_followCurPos).sub(prevSelectedPosRef.current);
-          camera.position.add(_followDelta);
-          prevSelectedPosRef.current.copy(_followCurPos);
+          // The satellite circles the Earth, so carry the camera along the same rotation about the
+          // Earth's centre: its position relative to the satellite (set by the user's dragging
+          // and zooming) is preserved, and the camera never has to cross the globe.
+          _followOffset.copy(camera.position).sub(controls.target);
+          _followPrevDir.copy(prev).normalize();
+          _followCurDir.copy(_followCurPos).normalize();
+          _followQuat.setFromUnitVectors(_followPrevDir, _followCurDir);
+          _followOffset.applyQuaternion(_followQuat);
+          camera.position.copy(_followCurPos).add(_followOffset);
+          prev.copy(_followCurPos);
         }
+        if (camera.position.length() < CAMERA_MIN_RADIUS) camera.position.setLength(CAMERA_MIN_RADIUS);
         controls.target.copy(_followCurPos);
       }
     } else {
