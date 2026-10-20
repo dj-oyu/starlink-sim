@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import * as THREE from 'three';
 import { rawColor, srgbEncode } from '../util/rawColor';
 import { assetUrl } from '../util/assetUrl';
+import { DOF_GLSL, applyDof, dofUniforms } from '../util/dof';
 import { useFrame, useThree } from '../fiber/PreactFiber';
 import { latLonAltToThree } from '../wasm/simEngine';
 
@@ -44,7 +45,22 @@ const EARTH_VERTEX_SHADER = /* glsl */ `
   }
 `;
 
+// 8 taps on a Vogel (golden-angle) disc, in units of the disc radius
+const DOF_TAPS_GLSL = /* glsl */ `
+#ifdef DOF
+  vec2 dofTap(int i, int n) {
+    float r = sqrt((float(i) + 0.5) / float(n));
+    float a = float(i) * 2.399963;
+    return r * vec2(cos(a), sin(a));
+  }
+#endif
+`;
+
 const EARTH_FRAGMENT_SHADER = /* glsl */ `
+#ifdef DOF
+  ${DOF_GLSL}
+#endif
+  ${DOF_TAPS_GLSL}
   uniform sampler2D uDayMap;
   uniform sampler2D uNightMap;
   uniform sampler2D uPackedMap;
@@ -77,6 +93,27 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
     vec3 nightColor = texture2D(uNightMap, vUv).rgb;
     vec3 packed = texture2D(uPackedMap, vUv).rgb;
     float specMask = texture2D(uSpecularMap, vUv).r;
+
+#ifdef DOF
+    // Depth-of-field-like defocus of the surface (and of the night lights, which also bloom).
+    // The derivatives are taken outside any branch; the branch itself only depends on uniforms.
+    vec2 uvDx = dFdx(vUv);
+    vec2 uvDy = dFdy(vUv);
+    float coc = dofCoc(length(cameraPosition - vPositionWorld));
+    if (dofZoom() > 0.0) {
+      float rd = uDofPx * coc;
+      vec3 dayAcc = vec3(0.0);
+      vec3 nightAcc = vec3(0.0);
+      for (int i = 0; i < 8; i++) {
+        vec2 t = dofTap(i, 8);
+        vec2 duv = uvDx * t.x + uvDy * t.y;
+        dayAcc += texture2D(uDayMap, vUv + duv * rd).rgb;
+        nightAcc += texture2D(uNightMap, vUv + duv * rd * 1.7).rgb;
+      }
+      dayColor = mix(dayColor, dayAcc * 0.125, smoothstep(0.0, 0.08, coc));
+      nightColor = mix(nightColor, nightAcc * 0.125 * (1.0 + 0.8 * coc), smoothstep(0.0, 0.08, coc));
+    }
+#endif
 
     float cloudShadow = 1.0;
     if (uCloudsEnabled > 0.5) {
@@ -126,24 +163,45 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
 const CLOUDS_VERTEX_SHADER = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormalWorld;
+  varying vec3 vPositionWorld;
 
   void main() {
     vUv = uv;
     vNormalWorld = normal;
+    vPositionWorld = position;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
 const CLOUDS_FRAGMENT_SHADER = /* glsl */ `
+#ifdef DOF
+  ${DOF_GLSL}
+#endif
+  ${DOF_TAPS_GLSL}
   uniform sampler2D uPackedMap;
   uniform vec3 uSunDir;
   uniform float uDayNightEnabled;
 
   varying vec2 vUv;
   varying vec3 vNormalWorld;
+  varying vec3 vPositionWorld;
 
   void main() {
     float cloud = texture2D(uPackedMap, vUv).b;
+#ifdef DOF
+    vec2 uvDx = dFdx(vUv);
+    vec2 uvDy = dFdy(vUv);
+    float coc = dofCoc(length(cameraPosition - vPositionWorld));
+    if (dofZoom() > 0.0) {
+      float rd = uDofPx * coc * 1.3;
+      float acc = 0.0;
+      for (int i = 0; i < 6; i++) {
+        vec2 t = dofTap(i, 6);
+        acc += texture2D(uPackedMap, vUv + (uvDx * t.x + uvDy * t.y) * rd).b;
+      }
+      cloud = mix(cloud, acc * (1.0 / 6.0), smoothstep(0.0, 0.08, coc));
+    }
+#endif
     if (cloud < 0.03) discard;
 
     vec3 N = normalize(vNormalWorld);
@@ -282,6 +340,7 @@ export function EarthGlobe({
         uTacticalMix: { value: 0.0 },
         uDayNightEnabled: { value: 1.0 },
         uCloudsEnabled: { value: 1.0 },
+        ...dofUniforms,
       },
     });
     const earthMesh = new THREE.Mesh(earthGeom, earthMat);
@@ -299,6 +358,7 @@ export function EarthGlobe({
         uPackedMap: { value: packedTex },
         uSunDir: { value: new THREE.Vector3(1, 0, 0) },
         uDayNightEnabled: { value: 1.0 },
+        ...dofUniforms,
       },
       transparent: true,
       depthWrite: false,
@@ -417,6 +477,9 @@ export function EarthGlobe({
     const dayNightVal = visualSettings.dayNightShading ? 1.0 : 0.0;
     const cloudsVal = visualSettings.showClouds ? 1.0 : 0.0;
 
+    // (the DOF state is updated by ConstellationView, which owns the camera)
+    if (earthMatRef.current) applyDof(earthMatRef.current);
+    if (cloudsMatRef.current) applyDof(cloudsMatRef.current);
     if (earthMatRef.current) {
       earthMatRef.current.uniforms.uSunDir.value.set(sx, sy, sz);
       earthMatRef.current.uniforms.uTacticalMix.value = tacticalTarget;
