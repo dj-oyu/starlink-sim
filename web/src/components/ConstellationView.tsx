@@ -12,6 +12,7 @@ import {
 import { EarthGlobe, EarthVisualSettings } from './EarthGlobe';
 import { LensFlare } from './LensFlare';
 import { rawColor } from '../util/rawColor';
+import { DOF_GLSL, DOF_MAX_CSS_PX, applyDof, dofUniforms, updateDofState } from '../util/dof';
 
 export interface FullPerfSnapshot extends Omit<RenderPerfStats, 'events' | 'hitches'> {
   hitches?: RenderPerfStats['hitches'];
@@ -117,6 +118,10 @@ function fitCameraDistance(
  */
 const SAT_POINTS_VERT = /* glsl */ `
   attribute float aStyle;
+#ifdef DOF
+  ${DOF_GLSL}
+  varying float vBlur;
+#endif
   varying vec3 vColor;
   varying float vIntensity;
 
@@ -133,6 +138,9 @@ const SAT_POINTS_VERT = /* glsl */ `
       gl_PointSize = 0.0;
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
       vColor = vec3(0.0);
+#ifdef DOF
+      vBlur = 0.0;
+#endif
       return;
     }
 
@@ -158,7 +166,18 @@ const SAT_POINTS_VERT = /* glsl */ `
 
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float dist = max(-mvPosition.z, 0.25);
+
+    // Depth-of-field-like defocus: the closer the camera is to the focal plane (zoomed in on the
+    // Earth), the more satellites away from it go soft. Zoomed out (uFocus >= 0.7) there is none.
+    // Highlighted satellites stay mostly readable.
+#ifdef DOF
+    float blur = dofCoc(dist);
+    if (aStyle >= 9.5) blur *= 0.35;
+    vBlur = blur;
+    gl_PointSize = clamp(baseSize * (5.2 / dist) * (1.0 + 1.8 * blur), 2.0, 26.0 + 20.0 * blur);
+#else
     gl_PointSize = clamp(baseSize * (5.2 / dist), 2.0, 26.0);
+#endif
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -166,15 +185,26 @@ const SAT_POINTS_VERT = /* glsl */ `
 const SAT_POINTS_FRAG = /* glsl */ `
   varying vec3 vColor;
   varying float vIntensity;
+#ifdef DOF
+  varying float vBlur;
+#endif
 
   void main() {
     vec2 uv = gl_PointCoord * 2.0 - 1.0;
     float r2 = dot(uv, uv);
     if (r2 > 1.0) discard;
+#ifdef DOF
+    // defocus: flatter, wider falloff and (roughly) conserved energy over the larger disc
+    float core = exp(-r2 * mix(4.2, 1.0, vBlur));
+    float halo = pow(1.0 - r2, mix(1.8, 0.7, vBlur)) * 0.65;
+    float energy = 1.0 / (1.0 + 2.5 * vBlur);
+#else
     float core = exp(-r2 * 4.2);
     float halo = pow(1.0 - r2, 1.8) * 0.65;
+    float energy = 1.0;
+#endif
     vec3 col = vColor * (0.75 + 0.65 * core);
-    gl_FragColor = vec4(col, (core + halo) * vIntensity);
+    gl_FragColor = vec4(col, (core + halo) * vIntensity * energy);
   }
 `;
 
@@ -417,7 +447,7 @@ export function ConstellationView({
     const ptsMat = new THREE.ShaderMaterial({
       vertexShader: gpuBufs ? SAT_POINTS_VERT_GPU : SAT_POINTS_VERT,
       fragmentShader: SAT_POINTS_FRAG,
-      uniforms: gpuBufs ? gpuBufs.uniforms : {},
+      uniforms: { ...(gpuBufs ? gpuBufs.uniforms : {}), ...dofUniforms },
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -1000,6 +1030,12 @@ export function ConstellationView({
       trailState.prevSimMs = currentSimMs;
     }
     }
+    // Focal plane: the Earth's surface while orbiting the globe, the followed satellite while following
+    // (off while following: the satellite view keeps its original look)
+    dofUniforms.uFocus.value = followSelected ? 100 : Math.max(camera.position.length() - 1, 0.01);
+    dofUniforms.uDofPx.value = DOF_MAX_CSS_PX * renderer.getPixelRatio();
+    updateDofState(dofUniforms.uFocus.value);
+    if (pointsRef.current) applyDof(pointsRef.current.material as THREE.ShaderMaterial);
     const trailMat = trailMatRef.current;
     if (trailMat) {
       // Fade in while time is advancing, fade out when paused (a paused sky has no motion hint)
