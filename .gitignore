@@ -7,8 +7,7 @@ target
 node_modules/
 web/node_modules/
 web/dist/
-# Third-party assets of unverified redistribution terms (see README)
-web/public/assets/textures/
+# Downloaded by the dev server / the Pages workflow, never committed
 web/public/assets/data/starlink.tle
 
 # Claude Code agent worktrees

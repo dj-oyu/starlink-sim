@@ -26,6 +26,8 @@ export default function tleSync() {
     configureServer: attach,
     configurePreviewServer: attach,
     async closeBundle() {
+      // static hosting (GitHub Pages) has no sync server: the workflow downloads the TLE and sets KEEP_TLE=1
+      if (process.env.KEEP_TLE) return;
       // keep a possibly stale local TLE (and the cool-down marker) out of the build output
       for (const f of ['starlink.tle', '.starlink.tle.attempt']) {
         await rm(join(root, outDir, 'assets', 'data', f), { force: true });

@@ -3,22 +3,24 @@
 This repository's own code is licensed under Apache-2.0 (see `LICENSE`).
 The following materials are used by the application but are **not** covered by it.
 
-## Downloaded at setup time (not committed)
+## Downloaded at run / build time (not committed)
 
-Fetched by `web/scripts/fetch-assets.mjs`; see `README.md`.
-
-- **Earth textures** (`earth_day_4096.jpg`, `earth_night_4096.jpg`,
-  `earth_bump_roughness_clouds_4096.jpg`, `earth_normal_2048.jpg`,
-  `earth_specular_2048.jpg`) — obtained from the three.js repository
-  (<https://github.com/mrdoob/three.js>, tag `r169`, `examples/textures/planets/`),
-  which is distributed under the MIT License. The upstream repository does not
-  state the origin or license of each individual texture, so check the terms
-  yourself before redistributing them or using them commercially.
 - **Starlink orbital elements (TLE)** — CelesTrak (<https://celestrak.org>),
   derived from Space-Track / 18th Space Defense Squadron data. Follow CelesTrak's
   usage terms; automated requests are rate-limited.
 
 ## Committed in this repository
+
+- **Earth textures** (`web/public/assets/textures/*.jpg`) — derived from the
+  [Solar System Scope textures](https://www.solarsystemscope.com/textures/)
+  (Earth day / night / clouds / normal / specular maps; based on NASA elevation
+  and imagery data, incl. the Blue Marble collection), licensed under
+  [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+  **Changes made:** downscaled (8K → 4096×2048 / 2K), re-encoded as JPEG, the
+  normal map's tilt amplified and renormalized, and the land mask, a constant and
+  the cloud map packed into the R/G/B channels of one image
+  (`web/scripts/build-textures.mjs`). These modified files are distributed under
+  the same CC BY 4.0 terms, not Apache-2.0. Solar System Scope does not endorse this project.
 
 - **Natural Earth 110m coastline and admin-0 boundaries**
   (`web/public/assets/data/ne_110m_*`) — public domain

@@ -3,6 +3,8 @@ import preact from '@preact/preset-vite';
 import tleSync from './server/vite-plugin-tle.mjs';
 
 export default defineConfig({
+  // GitHub Pages serves under /<repo>/: the workflow sets BASE_PATH (.github/workflows/pages.yml)
+  base: process.env.BASE_PATH || '/',
   plugins: [preact(), tleSync()],
   resolve: {
     alias: {

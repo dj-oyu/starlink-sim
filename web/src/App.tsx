@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Canvas, threeHandleRef } from './fiber/PreactFiber';
 import { runGpuBench } from './util/gpuBench';
 import { useMediaQuery } from './util/useMediaQuery';
+import { assetUrl } from './util/assetUrl';
 import {
   SatInspectorBody,
   SatInspectorTitle,
@@ -762,7 +763,7 @@ export function App() {
   useEffect(() => {
     if (!showTleModal) return;
     let cancelled = false;
-    fetch('/api/tle-status', { cache: 'no-store' })
+    fetch(assetUrl('api/tle-status'), { cache: 'no-store' })
       .then((r) => r.json())
       .then((s) => {
         if (cancelled) return;

@@ -1,3 +1,5 @@
+import { assetUrl } from '../util/assetUrl';
+
 export interface WasmSimExports {
   memory: WebAssembly.Memory;
   reset_constellation: () => void;
@@ -314,7 +316,7 @@ export class StarlinkSimEngine {
   }
 
   async init(): Promise<void> {
-    const wasmRes = await fetch('/assets/wasm/starlink-sim.wasm');
+    const wasmRes = await fetch(assetUrl('assets/wasm/starlink-sim.wasm'));
     const wasmBytes = await wasmRes.arrayBuffer();
     const { instance } = await WebAssembly.instantiate(wasmBytes, {});
     this.api = instance.exports as unknown as WasmSimExports;
@@ -338,7 +340,7 @@ export class StarlinkSimEngine {
     force = false,
   ): Promise<{ status: 'loaded' | 'unchanged' | 'unavailable'; count: number }> {
     try {
-      const res = await fetch('/assets/data/starlink.tle', { cache: 'no-cache' });
+      const res = await fetch(assetUrl('assets/data/starlink.tle'), { cache: 'no-cache' });
       if (!res.ok) return { status: 'unavailable', count: this.count };
       const version = res.headers.get('etag') || res.headers.get('last-modified') || '';
       if (!force && version && version === this.tleVersion && this.count > 0) {

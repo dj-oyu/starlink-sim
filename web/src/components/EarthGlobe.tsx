@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'preact/hooks';
 import * as THREE from 'three';
 import { rawColor, srgbEncode } from '../util/rawColor';
+import { assetUrl } from '../util/assetUrl';
 import { useFrame, useThree } from '../fiber/PreactFiber';
 import { latLonAltToThree } from '../wasm/simEngine';
 
@@ -256,14 +257,14 @@ export function EarthGlobe({
       tex.anisotropy = 8;
       return tex;
     };
-    const dayTex = conf(loader.load('/assets/textures/earth_day_4096.jpg'));
-    const nightTex = conf(loader.load('/assets/textures/earth_night_4096.jpg'));
+    const dayTex = conf(loader.load(assetUrl('assets/textures/earth_day_4096.jpg')));
+    const nightTex = conf(loader.load(assetUrl('assets/textures/earth_night_4096.jpg')));
     const packedTex = conf(
-      loader.load('/assets/textures/earth_bump_roughness_clouds_4096.jpg'),
+      loader.load(assetUrl('assets/textures/earth_bump_roughness_clouds_4096.jpg')),
     );
-    const normalTex = conf(loader.load('/assets/textures/earth_normal_2048.jpg'));
+    const normalTex = conf(loader.load(assetUrl('assets/textures/earth_normal_2048.jpg')));
     const specularTex = conf(
-      loader.load('/assets/textures/earth_specular_2048.jpg'),
+      loader.load(assetUrl('assets/textures/earth_specular_2048.jpg')),
     );
 
     // 3. Main Earth Sphere (64x64 is visually identical to 96x96 while saving >50% vertex work)
@@ -353,8 +354,8 @@ export function EarthGlobe({
 
     let active = true;
     Promise.all([
-      fetch('/assets/data/ne_110m_coastline.bin').then((r) => r.arrayBuffer()),
-      fetch('/assets/data/ne_110m_borders.bin').then((r) => r.arrayBuffer()),
+      fetch(assetUrl('assets/data/ne_110m_coastline.bin')).then((r) => r.arrayBuffer()),
+      fetch(assetUrl('assets/data/ne_110m_borders.bin')).then((r) => r.arrayBuffer()),
     ])
       .then(([coastBuf, borderBuf]) => {
         if (!active) return;

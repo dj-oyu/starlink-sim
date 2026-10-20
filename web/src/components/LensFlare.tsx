@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'preact/hooks';
 import * as THREE from 'three';
 import { useFrame, useThree } from '../fiber/PreactFiber';
+import { assetUrl } from '../util/assetUrl';
 import { glintPoint, sphereUv, sunVisibility } from '../optics/flareMath.mjs';
 import type { Vec3 } from '../optics/flareMath.mjs';
 
@@ -99,7 +100,7 @@ function useSpecularMask() {
       ctx.drawImage(img, 0, 0, w, h);
       mask.current = { data: ctx.getImageData(0, 0, w, h).data, w, h };
     };
-    img.src = '/assets/textures/earth_specular_2048.jpg';
+    img.src = assetUrl('assets/textures/earth_specular_2048.jpg');
     return () => {
       cancelled = true;
     };

@@ -1,0 +1,61 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *' # refresh the TLE snapshot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/configure-pages@v5
+        id: pages
+      - name: Install
+        working-directory: web
+        run: npm ci
+      - name: Download Starlink TLE (single request per build)
+        working-directory: web
+        run: |
+          mkdir -p public/assets/data
+          curl -fsSL -A "starlink-sim-pages-build" \
+            "https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=tle" \
+            -o public/assets/data/starlink.tle
+          test "$(wc -l < public/assets/data/starlink.tle)" -gt 300
+      - name: Build
+        working-directory: web
+        env:
+          # the committed wasm is used as is (no MoonBit toolchain needed)
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}/
+          KEEP_TLE: '1'
+        run: npx vite build
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

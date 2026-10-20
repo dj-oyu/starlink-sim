@@ -50,16 +50,13 @@ moon fmt && moon info
 
 ## 外部素材と TLE
 
-### 地球テクスチャ(初回起動時に自動取得)
+### 地球テクスチャ(リポジトリに同梱)
 
-出典・再配布条件の都合でリポジトリに含めていません(`.gitignore` 済み)。`dev` / `build` の前に `web/scripts/fetch-assets.mjs` が、three.js `r169` の `examples/textures/planets/` から 5 枚を自動で取得します。存在するファイルは再取得しません。
+[Solar System Scope](https://www.solarsystemscope.com/textures/) のテクスチャ(CC BY 4.0、NASA Blue Marble 等が元)を縮小・再エンコード・チャンネル合成した物を `web/public/assets/textures/` にコミットしています。これらのファイルは Apache-2.0 ではなく CC BY 4.0 に従います(表示は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) とアプリ内の TLE ダイアログ)。再生成は `npm run build:textures`(`web/scripts/build-textures.mjs`、ネットワーク必須)。
 
-```sh
-npm run fetch:assets              # 不足分を取得(pnpm の場合は pnpm fetch:assets)
-npm run fetch:assets -- --force   # すべて再取得
-```
+### GitHub Pages
 
-出典の詳細は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+`.github/workflows/pages.yml` が `main` への push と 6 時間ごとに、CelesTrak から TLE を 1 回取得してビルドし、公開します(リポジトリの Settings → Pages → Source を「GitHub Actions」にしてください)。静的ホスティングなのでサーバー側の TLE 自動更新は動かず、TLE はビルド時点のスナップショットです。サブパス配信のため `BASE_PATH` を Vite の `base` に渡しています。
 
 ### Starlink TLE(サーバーが自動で取得・更新)
 
