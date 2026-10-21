@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
+import { startStallDiag } from '../util/stallDiag';
 import * as THREE from 'three';
 import { useFrame, useThree, RenderPerfStats, FRAME_EVENT } from '../fiber/PreactFiber';
 import {
@@ -783,6 +784,8 @@ export function ConstellationView({
       if (viewCommandsRef) viewCommandsRef.current = null;
     };
   }, [viewCommandsRef, camera, controls, obsThreePos, followSelected, posAttr]);
+
+  useEffect(() => startStallDiag(controls, camera), [controls, camera]);
 
   useEffect(() => {
     if (!followSelected) {

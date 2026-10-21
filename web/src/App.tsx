@@ -23,6 +23,7 @@ import {
   ViewCommands,
 } from './components/ConstellationView';
 import { SkyPlot } from './components/SkyPlot';
+import { StallDiagBadge } from './components/StallDiagBadge';
 import { EarthVisualSettings } from './components/EarthGlobe';
 import {
   PerfMonitorPanel,
@@ -1242,6 +1243,7 @@ export function App() {
         </section>
       </aside>
 
+      <StallDiagBadge />
       <div className="right-column">
       {/* PERFORMANCE PROFILER PANEL */}
       {showPerfPanel && (

@@ -5,6 +5,7 @@ import tleSync from './server/vite-plugin-tle.mjs';
 export default defineConfig({
   // GitHub Pages serves under /<repo>/: the workflow sets BASE_PATH (.github/workflows/pages.yml)
   base: process.env.BASE_PATH || '/',
+  define: { __BUILD_ID__: JSON.stringify((process.env.GITHUB_SHA || 'dev').slice(0, 7)) },
   plugins: [preact(), tleSync()],
   resolve: {
     alias: {
