@@ -91,6 +91,7 @@ const _flyQPart = new THREE.Quaternion();
 const _flyQId = new THREE.Quaternion();
 const _flyDir = new THREE.Vector3();
 const _origin = new THREE.Vector3(0, 0, 0);
+const _yAxis = new THREE.Vector3(0, 1, 0);
 const _viewSize = new THREE.Vector2();
 
 /** Camera distance that fits the whole globe in the viewport (portrait screens sit further back). */
@@ -773,8 +774,7 @@ export function ConstellationView({
           flyTo(tmp, Math.max(1.9, fitDistance() * 0.75), _origin, 1.0);
         },
         setAutoRotate: (on) => {
-          controls.autoRotate = on;
-          controls.autoRotateSpeed = 0.6;
+          autoRotateRef.current = on;
         },
       };
     }
@@ -783,6 +783,27 @@ export function ConstellationView({
       if (viewCommandsRef) viewCommandsRef.current = null;
     };
   }, [viewCommandsRef, camera, controls, obsThreePos, followSelected, posAttr]);
+
+  // Auto-rotate is done here instead of OrbitControls.autoRotate: that one only runs while the
+  // controls' internal state is NONE, and a missed pointerup (e.g. after a night in a background
+  // tab) leaves a stale pointer behind that blocks it for good while dragging still works.
+  const autoRotateRef = useRef(false);
+  const pointerDownRef = useRef(false);
+  useEffect(() => {
+    const el = renderer.domElement;
+    const down = () => (pointerDownRef.current = true);
+    const up = () => (pointerDownRef.current = false);
+    el.addEventListener('pointerdown', down);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    window.addEventListener('blur', up);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      window.removeEventListener('blur', up);
+    };
+  }, [renderer]);
 
   useEffect(() => {
     if (!followSelected) {
@@ -841,6 +862,11 @@ export function ConstellationView({
       );
       controls.target.lerpVectors(fl.fromTarget, fl.toTarget, e);
       if (k >= 1) fl.active = false;
+    }
+
+    if (autoRotateRef.current && !pointerDownRef.current && !fl.active) {
+      // same speed as OrbitControls' autoRotateSpeed 0.6 (rad/s), the same direction
+      camera.position.applyAxisAngle(_yAxis, -((2 * Math.PI) / 60) * 0.6 * Math.min(delta, 0.1));
     }
 
     const dtClamped = Math.min(delta, 0.1);
