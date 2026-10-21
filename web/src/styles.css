@@ -1220,3 +1220,42 @@ textarea {
     padding: 0 4px;
   }
 }
+
+/* Auto-rotate stall diagnostics: only rendered once a stall has been recorded */
+.stall-diag {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 50;
+  font-size: 12px;
+  max-width: calc(100vw - 16px);
+}
+.stall-diag button {
+  background: rgba(8, 18, 38, 0.9);
+  color: #fcd34d;
+  border: 1px solid #92400e;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.stall-diag-panel {
+  margin-top: 6px;
+  padding: 8px;
+  background: rgba(8, 18, 38, 0.95);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #cbd5e1;
+}
+.stall-diag-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.stall-diag-panel pre {
+  margin: 6px 0 0;
+  max-height: 40vh;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
